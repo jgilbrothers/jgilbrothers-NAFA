@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>NAFA Ledger - Workstation</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Secure local-first financial intelligence workspace for accounting distribution balances & reports." />
+  </head>
+  <body class="bg-slate-50 antialiased overflow-x-hidden text-slate-900">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Register service worker for offline shell capabilities
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('NAFA Workstation ServiceWorker registered:', reg.scope))
+            .catch(err => console.warn('ServiceWorker registration deferred:', err));
+        });
+      }
+    </script>
+  </body>
+</html>
+

@@ -1,0 +1,6 @@
+{
+  "name": "Nafa Ledger",
+  "description": "Professional financial ledger, transaction tracking, document organization, and AI-assisted analysis for family law and accounting distribution workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
