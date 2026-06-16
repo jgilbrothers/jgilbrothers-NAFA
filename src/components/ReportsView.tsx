@@ -25,6 +25,7 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Transaction, AccountSummary, DocumentRecord } from '../types';
+import { SAVED_REPORT_SESSIONS_KEY } from '../utils/persistence';
 
 export interface SavedReportSession {
   id: string;
@@ -94,7 +95,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
   // Local report history sessions persistence
   const [savedSessions, setSavedSessions] = useState<SavedReportSession[]>(() => {
     try {
-      const raw = localStorage.getItem('nafa_saved_reported_sessions_v1');
+      const raw = localStorage.getItem(SAVED_REPORT_SESSIONS_KEY);
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -144,7 +145,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
 
     const updated = [newSession, ...savedSessions];
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    localStorage.setItem(SAVED_REPORT_SESSIONS_KEY, JSON.stringify(updated));
     setSessionDraftName('');
     triggerSuccessNotification('Saved report configuration saved to local workstations history');
   };
@@ -176,7 +177,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
     e.stopPropagation();
     const updated = savedSessions.filter(s => s.id !== id);
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    localStorage.setItem(SAVED_REPORT_SESSIONS_KEY, JSON.stringify(updated));
     triggerSuccessNotification('Removed report session from workspace history');
   };
 

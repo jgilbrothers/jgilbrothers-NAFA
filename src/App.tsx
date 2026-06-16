@@ -46,7 +46,7 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog, WorkspaceProfile } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, clearSavedReportSessions, exportWorkspaceToFile } from './utils/persistence';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "Nafa Ledger";
@@ -558,6 +558,7 @@ export default function App() {
 
   const handleResetDatabase = () => {
     clearSavedWorkspace();
+    clearSavedReportSessions();
     setAccounts([]);
     setDocuments([]);
     setTransactions([]);
