@@ -569,6 +569,13 @@ export default function App() {
   };
 
   const handleLoadDemoData = () => {
+    const hasWorkspaceData = accounts.length > 0 || documents.length > 0 || transactions.length > 0 || rules.length > 0;
+    const confirmationMessage = hasWorkspaceData
+      ? 'This will replace your current workspace data with sample demo data. Export a backup first if you want to preserve your current workspace.'
+      : 'Load sample demo data into this empty workspace?';
+
+    if (!confirm(confirmationMessage)) return;
+
     setAccounts(MOCK_ACCOUNTS);
     setDocuments(MOCK_DOCUMENTS);
     setTransactions(MOCK_TRANSACTIONS);
@@ -576,7 +583,7 @@ export default function App() {
     setReconItems(MOCK_RECON_ITEMS);
     setAuditLogs(MOCK_AUDIT_LOGS);
     setChatLog([]);
-    appendAuditLog('LOAD_DEMO_DATA', 'Loaded sample demo data into this local workspace.', 'warning');
+    appendAuditLog('LOAD_DEMO_DATA', 'Replaced workspace data with sample demo data.', 'warning');
   };
 
   const handleSaveProfile = (e: React.FormEvent) => {

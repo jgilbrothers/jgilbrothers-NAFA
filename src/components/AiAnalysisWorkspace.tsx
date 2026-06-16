@@ -185,7 +185,7 @@ export default function AiAnalysisWorkspace({
           </div>
           <div className="flex justify-center gap-2">
             <button onClick={() => onNavigate('documents')} className="bg-slate-900 text-white rounded-lg px-4 py-2 text-xs font-bold">Import Statement</button>
-            <button onClick={() => { if (confirm('Load sample demo data into this workspace?')) onLoadDemoData(); }} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Load Demo Data</button>
+            <button onClick={onLoadDemoData} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Load Demo Data</button>
           </div>
         </div>
       ) : (

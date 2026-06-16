@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WorkspaceProfile } from '../types';
 import { 
   Settings, 
@@ -46,6 +46,10 @@ export default function SettingsView({
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
   const [profileDraft, setProfileDraft] = useState(profile);
+
+  useEffect(() => {
+    setProfileDraft(profile);
+  }, [profile]);
 
   const handleSaveConfigs = (e: React.FormEvent) => {
     e.preventDefault();
@@ -315,13 +319,13 @@ export default function SettingsView({
               <div className="pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => { if (confirm('Load sample demo data into this workspace? This adds sample accounts, documents, transactions, and rules.')) onLoadDemoData(); }}
+                  onClick={onLoadDemoData}
                   className="w-full bg-indigo-700 hover:bg-red-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                 >
-                  <Sparkles className="h-3.5 w-3.5" /> Load Sample Demo Data
+                  <Sparkles className="h-3.5 w-3.5" /> Replace with Sample Demo Data
                 </button>
                 <span className="text-[9px] text-slate-400 block mt-1.5 text-center font-sans font-medium">
-                  Adds demo accounts, statements, transactions, rules, and review items only after confirmation.
+                  Replaces workspace data with sample accounts, statements, transactions, rules, and review items after confirmation.
                 </span>
               </div>
               <div className="pt-2 border-t border-slate-100">
