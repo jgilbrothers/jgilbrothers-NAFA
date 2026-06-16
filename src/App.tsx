@@ -48,6 +48,26 @@ import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage,
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, clearSavedReportSessions, exportWorkspaceToFile } from './utils/persistence';
 
+const EMPTY_PROFILE_DRAFT = {
+  userDisplayName: '',
+  workspaceName: '',
+  caseOrProjectName: '',
+  jurisdiction: 'North Carolina'
+};
+
+function hasValidWorkspaceProfile(workspace: ReturnType<typeof loadWorkspace>): boolean {
+  const profile = workspace?.profile;
+  return Boolean(
+    profile &&
+    typeof profile.userDisplayName === 'string' && profile.userDisplayName.trim() &&
+    typeof profile.workspaceName === 'string' && profile.workspaceName.trim() &&
+    typeof profile.jurisdiction === 'string' && profile.jurisdiction.trim() &&
+    typeof profile.createdAt === 'string' && profile.createdAt.trim() &&
+    typeof profile.lastOpenedAt === 'string' && profile.lastOpenedAt.trim() &&
+    typeof profile.appVersion === 'string' && profile.appVersion.trim()
+  );
+}
+
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "Nafa Ledger";
   const appVersion = (import.meta as any).env?.VITE_APP_VERSION || "1.0.0";
@@ -55,8 +75,19 @@ export default function App() {
   // Navigation tabs
   const [activeTab, setActiveTab] = useState<string>('dashboard');
 
-  // Load baseline persisted workspace from Client standard database if exists
-  const initialWorkspace = useMemo(() => loadWorkspace(), []);
+  // Load a saved workspace only when it has a valid local profile.
+  const initialWorkspace = useMemo(() => {
+    const savedWorkspace = loadWorkspace();
+    if (!savedWorkspace) return null;
+
+    if (!hasValidWorkspaceProfile(savedWorkspace)) {
+      clearSavedWorkspace();
+      clearSavedReportSessions();
+      return null;
+    }
+
+    return savedWorkspace;
+  }, []);
 
   // Ledger state repositories initialized with fallback default database seeds
   const [accounts, setAccounts] = useState<AccountSummary[]>(() => {
@@ -94,10 +125,11 @@ export default function App() {
     return { ...initialWorkspace.profile, lastOpenedAt: new Date().toISOString(), appVersion };
   });
   const [profileDraft, setProfileDraft] = useState({
-    userDisplayName: initialWorkspace?.profile?.userDisplayName ?? '',
-    workspaceName: initialWorkspace?.profile?.workspaceName ?? '',
-    caseOrProjectName: initialWorkspace?.profile?.caseOrProjectName ?? '',
-    jurisdiction: initialWorkspace?.profile?.jurisdiction ?? 'North Carolina'
+    ...EMPTY_PROFILE_DRAFT,
+    userDisplayName: initialWorkspace?.profile?.userDisplayName ?? EMPTY_PROFILE_DRAFT.userDisplayName,
+    workspaceName: initialWorkspace?.profile?.workspaceName ?? EMPTY_PROFILE_DRAFT.workspaceName,
+    caseOrProjectName: initialWorkspace?.profile?.caseOrProjectName ?? EMPTY_PROFILE_DRAFT.caseOrProjectName,
+    jurisdiction: initialWorkspace?.profile?.jurisdiction ?? EMPTY_PROFILE_DRAFT.jurisdiction
   });
 
 
@@ -567,6 +599,7 @@ export default function App() {
     setAuditLogs([]);
     setChatLog([]);
     setProfile(null);
+    setProfileDraft({ ...EMPTY_PROFILE_DRAFT });
   };
 
   const handleLoadDemoData = () => {
