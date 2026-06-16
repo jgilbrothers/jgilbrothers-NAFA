@@ -136,12 +136,12 @@ export default function App() {
       keywords: "ledger transactions splits filter categories overrides card"
     },
     {
-      title: "🧠 Ask Nafa AI Auditor Chatbot",
-      description: "Query context-aware narratives and financial child support summaries.",
+      title: "🧠 Ask Nafa AI Assistant",
+      description: "Ask questions about imported transactions and financial summaries.",
       action: () => setActiveTab('ai-chat'),
       icon: "🧠",
       shortcut: "G + A",
-      keywords: "ai chatbot chat audit prompt gemini questions helper support"
+      keywords: "ai chatbot chat analysis prompt gemini questions helper support"
     },
     {
       title: "⚙️ System Configuration Settings",
@@ -152,8 +152,8 @@ export default function App() {
       keywords: "settings jurisdiction reset seed backup restore warnings"
     },
     {
-      title: "🗳️ Resolve Low-Confidence Discrepancies",
-      description: "Audit duplicate statements, category rules, and transfer pairs.",
+      title: "🗳️ Resolve Review Items",
+      description: "Review duplicate statements, category rules, and transfer pairs.",
       action: () => setActiveTab('review-queue'),
       icon: "🛡️",
       shortcut: "G + R",
@@ -221,7 +221,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction]);
+  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
 
   // Command palette action trigger
   const runPaletteCommand = (action: () => void) => {
@@ -247,13 +247,26 @@ export default function App() {
       id: "AUD-BAK-" + Math.random().toString(36).substring(2, 7).toUpperCase(),
       timestamp,
       action: 'BACKUP_EXPORT',
-      details: 'Authorized and downloaded backup replication archive file.',
+      details: 'Downloaded local workspace backup file.',
       level: 'info',
-      operator: "OperatorAdmin",
+      operator: "LocalUser",
       previous_entry_hash: auditLogs[auditLogs.length - 1]?.current_entry_hash ?? 'N/A',
-      current_entry_hash: 'SHA256-BLOCK-BAK-REPLICATED'
+      current_entry_hash: 'LOCAL-BACKUP-EXPORTED'
     };
     setAuditLogs(prev => [...prev, newLog]);
+  };
+
+  const profileFromBackup = (backupState: any): WorkspaceProfile => {
+    const now = new Date().toISOString();
+    return backupState.profile ?? {
+      userDisplayName: 'Local User',
+      workspaceName: backupState.metadata?.client_workspace || 'Restored NAFA Ledger Workspace',
+      caseOrProjectName: undefined,
+      jurisdiction: backupState.jurisdiction ?? 'North Carolina',
+      createdAt: now,
+      lastOpenedAt: now,
+      appVersion
+    };
   };
 
   const handleImportBackup = async (backupState: any): Promise<boolean> => {
@@ -265,19 +278,20 @@ export default function App() {
       setReconItems(backupState.reconItems ?? []);
       setAuditLogs(backupState.auditLogs ?? []);
       setChatLog(backupState.chatLog ?? []);
-      setProfile(backupState.profile ?? null);
-      setJurisdiction(backupState.jurisdiction ?? backupState.profile?.jurisdiction ?? 'North Carolina');
+      const restoredProfile = profileFromBackup(backupState);
+      setProfile(restoredProfile);
+      setJurisdiction(backupState.jurisdiction ?? restoredProfile.jurisdiction ?? 'North Carolina');
       
       const timestamp = new Date().toISOString();
       const newLog: AuditLog = {
         id: "AUD-RESTORE-" + Math.random().toString(36).substring(2, 7).toUpperCase(),
         timestamp,
         action: 'RESTORE_BACKUP',
-        details: `Successfully restored bank ledger backup containing ${backupState.transactions.length} entries.`,
+        details: `Successfully restored workspace backup containing ${backupState.transactions.length} entries.`,
         level: 'warning',
-        operator: "OperatorAdmin",
-        previous_entry_hash: "SHA256-BLOCK-RESTORED-HEADER",
-        current_entry_hash: "SHA255-BLOCK-RESTORED-CELL"
+        operator: "LocalUser",
+        previous_entry_hash: "LOCAL-RESTORE-START",
+        current_entry_hash: "LOCAL-RESTORE-COMPLETE"
       };
       setAuditLogs(prev => [...prev, newLog]);
       return true;
@@ -306,13 +320,13 @@ export default function App() {
       jurisdiction,
       profile
     });
-  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction]);
+  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
 
   // Unified activity logging helper
   const appendAuditLog = (action: string, details: string, level: 'info' | 'warning' | 'critical' = 'info') => {
     const timestamp = new Date().toISOString();
     const lastLog = auditLogs[auditLogs.length - 1];
-    const prevHash = lastLog ? lastLog.current_entry_hash : "INITIAL_BOOTSTRAP_HASH";
+    const prevHash = lastLog ? lastLog.current_entry_hash : "INITIAL_ACTIVITY_MARKER";
     
     // Simulate lightweight integrity marker generation
     const payload = `${action}:${details}:${timestamp}:${prevHash}`;
@@ -321,7 +335,7 @@ export default function App() {
       hash = (hash << 5) - hash + payload.charCodeAt(i);
       hash |= 0;
     }
-    const currentHash = "SHA256-BLOCK-" + Math.abs(hash).toString(16).toUpperCase().padEnd(14, '0');
+    const currentHash = "LOCAL-ACTIVITY-" + Math.abs(hash).toString(16).toUpperCase().padEnd(14, '0');
 
     const newLog: AuditLog = {
       id: "AUD-" + Math.random().toString(36).substring(2, 7).toUpperCase(),
@@ -329,7 +343,7 @@ export default function App() {
       action,
       details,
       level,
-      operator: "OperatorAdmin",
+      operator: "LocalUser",
       previous_entry_hash: prevHash,
       current_entry_hash: currentHash
     };
@@ -1059,7 +1073,7 @@ export default function App() {
       </div>
 
       {/* Workspace activity log terminal console */}
-      <section className="bg-slate-900 border-t border-slate-800 p-4 md:p-6" id="permanet-ledger-audits-view">
+      <section className="bg-slate-900 border-t border-slate-800 p-4 md:p-6" id="permanent-ledger-activity-view">
         <div className="max-w-7xl mx-auto space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-2.5 gap-2">
             <div className="flex items-center gap-2 text-white">
@@ -1093,7 +1107,7 @@ export default function App() {
                   activeAuditLevel === 'warning' ? 'bg-slate-800 text-white shadow-xs' : 'text-slate-500 hover:text-white'
                 }`}
               >
-                RISKS
+                WARNINGS
               </button>
             </div>
           </div>

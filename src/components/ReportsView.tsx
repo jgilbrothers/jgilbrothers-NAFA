@@ -384,7 +384,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
   // 3. EXPORT EXCEL/CSV SHEET STREAMING ENGINE (100% Client-Side & Offline-first)
   const handleTriggerCsvDownload = () => {
     let csv = '\uFEFF'; // UTF-8 BOM indicator for Excel support
-    csv += 'Audit Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,OCR Quality,Integrity Note,Amount\n';
+    csv += 'Review Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,OCR Quality,Integrity Note,Amount\n';
     
     const sanitizeCsvField = (val: string): string => {
       let escaped = val.replace(/"/g, '""');
@@ -652,11 +652,11 @@ export default function ReportsView({ transactions, accounts, documents = [], on
               <div class="stat-val">${filteredTransactions.length}</div>
             </div>
             <div>
-              <div class="meta-heading">Audited Outflows (Debits)</div>
+              <div class="meta-heading">Reviewed Outflows (Debits)</div>
               <div class="stat-val" style="color:#b91c1c;">$${totalDebitsAggregation.toFixed(2)}</div>
             </div>
             <div>
-              <div class="meta-heading">Audited Net Cash Flow</div>
+              <div class="meta-heading">Reviewed Net Cash Flow</div>
               <div class="stat-val" style="color:${(totalCreditsAggregation - totalDebitsAggregation) >= 0 ? '#166534' : '#b91c1c'};">
                 $${(totalCreditsAggregation - totalDebitsAggregation).toFixed(2)}
               </div>
@@ -692,7 +692,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
                 <th>Registry Code</th>
                 <th>Source Filename Reference</th>
                 <th>Statement Scope Focus</th>
-                <th>Audit Matching Index</th>
+                <th>Review Matching Index</th>
                 <th>Extracted Ledger Lines</th>
               </tr>
             </thead>
@@ -721,7 +721,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
       </html>
     `);
     printWindow.document.close();
-    triggerSuccessNotification('Audit PDF compilations loaded inside native PDF printing window!');
+    triggerSuccessNotification('Report PDF loaded inside native PDF printing window!');
   };
 
 
@@ -738,7 +738,6 @@ export default function ReportsView({ transactions, accounts, documents = [], on
           </div>
           <div className="flex flex-wrap justify-center gap-2">
             <button onClick={() => onNavigate('documents')} className="bg-slate-900 text-white rounded-lg px-4 py-2 text-xs font-bold">Import Statement</button>
-            <button disabled className="bg-slate-100 text-slate-400 rounded-lg px-4 py-2 text-xs font-bold cursor-not-allowed">Create Report after data exists</button>
             <button onClick={() => onNavigate('settings')} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Restore Workspace Backup</button>
           </div>
         </div>
@@ -753,7 +752,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Reports & Export Center</h4>
-          <p className="text-xs text-slate-500 mt-0.5">Filter joints accounts, analyze monthly progressions, and export fully detailed PDF/CSV report packages.</p>
+          <p className="text-xs text-slate-500 mt-0.5">Filter accounts, analyze monthly progressions, and export fully detailed PDF/CSV report packages.</p>
         </div>
         
         {/* Rapid Print Callouts */}
@@ -999,7 +998,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
             <form onSubmit={handleSaveReportSession} className="flex gap-2">
               <input 
                 type="text"
-                placeholder="Session Name (e.g., June Audit)"
+                placeholder="Session Name (e.g., June Review)"
                 value={sessionDraftName}
                 onChange={e => setSessionDraftName(e.target.value)}
                 className="flex-grow bg-slate-50 border border-slate-200 rounded text-[10px] p-2"
@@ -1178,9 +1177,9 @@ export default function ReportsView({ transactions, accounts, documents = [], on
               {reportType === 'asset_holdings' && (
                 <div className="space-y-3">
                   <div className="flex justify-between border-b pb-1.5 text-[9px] font-semibold text-slate-400 uppercase tracking-widest">
-                    <span>Custody Register account</span>
+                    <span>Account Register</span>
                     <span>Register Type</span>
-                    <span className="text-right">Ending Audited Balance</span>
+                    <span className="text-right">Ending Reviewed Balance</span>
                   </div>
 
                   <div className="space-y-3 select-none">

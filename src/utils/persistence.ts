@@ -74,7 +74,7 @@ export function exportWorkspaceToFile(state: WorkspaceState): void {
       schema_version: 'nafa-ledger-v3-backup',
       timestamp: new Date().toISOString(),
       metadata: {
-        operator: 'OperatorAdmin',
+        operator: 'LocalUser',
         client_workspace: state.profile?.workspaceName || 'Local Workspace',
         purpose: 'Workspace backup'
       },

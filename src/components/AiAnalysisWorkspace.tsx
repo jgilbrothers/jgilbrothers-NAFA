@@ -135,7 +135,7 @@ export default function AiAnalysisWorkspace({
               <tr className="border-b bg-slate-50 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
                 <th className="p-1 px-2.5">Extracted Segment</th>
                 <th className="p-1 px-2.5">Amount</th>
-                <th className="p-1 px-2.5">Audit Note</th>
+                <th className="p-1 px-2.5">Review Note</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
