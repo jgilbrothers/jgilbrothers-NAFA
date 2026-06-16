@@ -167,7 +167,7 @@ export default function App() {
       shortcut: "Ctrl + S",
       keywords: "backup download json raw serialize save data"
     }
-  ], [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction]);
+  ], [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
 
   const filteredPaletteCommands = useMemo(() => {
     if (!paletteSearch) return paletteCommands;

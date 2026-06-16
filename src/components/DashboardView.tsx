@@ -43,7 +43,8 @@ export default function DashboardView({
   unresolvedReviewCount
 }: DashboardViewProps) {
 
-  const hasFinancialData = accounts.length > 0 || transactions.length > 0;
+  const hasAccounts = accounts.length > 0;
+  const hasTransactions = transactions.length > 0;
   const pieData = aggregates.categorySpending.slice(0, 7);
 
   return (
@@ -63,7 +64,7 @@ export default function DashboardView({
         </div>
       </div>
 
-      {!hasFinancialData && (
+      {!hasAccounts && !hasTransactions && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-bold text-sm">No accounts added yet</h3><p className="text-xs text-slate-500 mt-1">Create your first account before linking statement documents.</p><button onClick={() => onNavigate('accounts')} className="mt-4 text-indigo-600 text-xs font-bold">Create your first account →</button></div>
           <div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-bold text-sm">No statements imported yet</h3><p className="text-xs text-slate-500 mt-1">Upload a CSV or statement to begin extracting transactions.</p><button onClick={() => onNavigate('documents')} className="mt-4 text-indigo-600 text-xs font-bold">Upload your first statement →</button></div>
@@ -71,9 +72,10 @@ export default function DashboardView({
         </div>
       )}
 
-      {hasFinancialData && (<>
+      {(hasAccounts || hasTransactions) && (<>
       {/* Analytical KPI Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4" id="metric-cards-grid">
+        {hasAccounts && (<>
         <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs p-5 hover:border-slate-300 transition-all flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-slate-400">
@@ -126,6 +128,9 @@ export default function DashboardView({
           </div>
         </div>
 
+        </>)}
+
+        {hasTransactions && (
         <div className={`rounded-xl shadow-xs p-5 transition-all border flex flex-col justify-between ${
           unresolvedReviewCount > 0 
             ? 'bg-amber-50/70 border-amber-200 text-amber-900' 
@@ -152,9 +157,11 @@ export default function DashboardView({
             </button>
           </div>
         </div>
+        )}
       </div>
 
       {/* Grid containing Charts */}
+      {hasTransactions ? (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Left columns: Category Spending & Income Flow Chart */}
@@ -297,6 +304,13 @@ export default function DashboardView({
         </div>
 
       </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-center space-y-2">
+          <h3 className="text-sm font-bold text-slate-900">Accounts added. Import statements to generate charts and financial summaries.</h3>
+          <p className="text-xs text-slate-500">Transaction charts, recent activity, category summaries, and review indicators will appear after transactions are imported.</p>
+          <button onClick={() => onNavigate('documents')} className="text-indigo-600 text-xs font-bold hover:underline">Import Statement →</button>
+        </div>
+      )}
       </>)}
 
     </div>
