@@ -116,3 +116,14 @@ export interface ChatMessage {
   sources?: string[];
   query_type?: string;
 }
+
+
+export interface WorkspaceProfile {
+  userDisplayName: string;
+  workspaceName: string;
+  caseOrProjectName?: string;
+  jurisdiction: string;
+  createdAt: string;
+  lastOpenedAt: string;
+  appVersion: string;
+}

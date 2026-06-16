@@ -52,9 +52,10 @@ interface ReportsViewProps {
   transactions: Transaction[];
   accounts: AccountSummary[];
   documents?: DocumentRecord[];
+  onNavigate: (tab: string) => void;
 }
 
-export default function ReportsView({ transactions, accounts, documents = [] }: ReportsViewProps) {
+export default function ReportsView({ transactions, accounts, documents = [], onNavigate }: ReportsViewProps) {
   // Report metadata states
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
@@ -307,7 +308,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
       // Check credit card/spending levels against paystub income deposits indicators
       const CCIncreaseMonths = chronList.filter((m, idx) => idx > 0 && m.expense > chronList[idx-1].expense && m.income < chronList[idx-1].income);
       if (CCIncreaseMonths.length > 0) {
-        narratives.push(`Workstation audits flagged an accumulation pattern: cash-outflow spend rates increased during months where income direct payload deposits decreased (specifically around ${CCIncreaseMonths.map(m => m.month).join(', ')}).`);
+        narratives.push(`Workspace review flagged an accumulation pattern: cash-outflow spend rates increased during months where income direct payload deposits decreased (specifically around ${CCIncreaseMonths.map(m => m.month).join(', ')}).`);
       }
     }
 
@@ -462,7 +463,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
       appendixLinesHTML += `
         <h2 class="page-break">PART IV: TRANSACTION LEDGER EXCLUSIONS APPENDIX (${appendixMode.toUpperCase()} MODE)</h2>
         <p style="font-size: 9px; margin-bottom: 12px; color: #475569;">
-          Below is the chronological itemized audit trail compiled according to selected parameters. 
+          Below is the chronological itemized activity trail compiled according to selected parameters. 
           ${!showAll && filteredTransactions.length > 30 ? `*Showing high-density selection of first 30 transactions of ${filteredTransactions.length} total rows. Set to "Detailed" mode for full publication list.*` : ''}
         </p>
         <table style="width:100%; border-collapse: collapse; font-size: 9px;">
@@ -683,7 +684,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
 
           <h2 class="page-break">PART III: VERIFIED INGESTED SOURCE COPIES REGISTRY</h2>
           <p style="font-size: 9.5px; margin-bottom: 10px; color: #475569;">
-            The following documentation packages were audited to construct this master ledger baseline:
+            The following source documents were reviewed to construct this master ledger baseline:
           </p>
           <table>
             <thead>
@@ -705,16 +706,16 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
           <div class="signatures">
             <div>
               <div class="sig-line"></div>
-              <div style="font-size: 8px; font-weight: bold; uppercase;">AUTHORIZED WORKSPACE REPORT SIGN-OFF</div>
+              <div style="font-size: 8px; font-weight: bold; uppercase;">WORKSPACE REPORT SIGN-OFF</div>
             </div>
             <div>
               <div class="sig-line"></div>
-              <div style="font-size: 8px; font-weight: bold; uppercase;">CO-SIGNATORY PARTY ENDORSEMENT</div>
+              <div style="font-size: 8px; font-weight: bold; uppercase;">REVIEWER ACKNOWLEDGEMENT</div>
             </div>
           </div>
 
           <div style="text-align: center; margin-top: 40px; font-size: 8px; color: #64748b; border-top: 1.5px solid #e2e8f0; padding-top: 15px;">
-            This document complies perfectly with federal local civil reporting guidelines. Rendered inside NAFA Ledger client workspace cache.
+            This document was generated from the local NAFA Ledger workspace.
           </div>
         </body>
       </html>
@@ -724,14 +725,35 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
   };
 
 
+  const hasReportData = transactions.length > 0 || savedSessions.length > 0;
+
+  if (!hasReportData) {
+    return (
+      <div className="space-y-6" id="reports-view-container">
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
+          <FileText className="h-10 w-10 mx-auto text-slate-400" />
+          <div>
+            <h4 className="text-sm font-bold text-slate-900">No report data available yet.</h4>
+            <p className="text-xs text-slate-500 mt-1">Import statements before creating report outputs. You can also restore a workspace backup.</p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button onClick={() => onNavigate('documents')} className="bg-slate-900 text-white rounded-lg px-4 py-2 text-xs font-bold">Import Statement</button>
+            <button disabled className="bg-slate-100 text-slate-400 rounded-lg px-4 py-2 text-xs font-bold cursor-not-allowed">Create Report after data exists</button>
+            <button onClick={() => onNavigate('settings')} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Restore Workspace Backup</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6" id="reports-view-container">
 
       {/* Primary Headers */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Reports & Print Builder Workstation</h4>
-          <p className="text-xs text-slate-500 mt-0.5">Filter joints accounts, analyze monthly progressions, and export fully detailed court-ready PDF/CSV packages.</p>
+          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Reports & Export Center</h4>
+          <p className="text-xs text-slate-500 mt-0.5">Filter joints accounts, analyze monthly progressions, and export fully detailed PDF/CSV report packages.</p>
         </div>
         
         {/* Rapid Print Callouts */}
@@ -1215,7 +1237,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
                         <span>INTEGRITY REVIEW WARNING: {integrityReportStats.totalUnresolved} RESOLUTION BLOCK ITEMS</span>
                       </div>
                       <p className="text-[10.5px] text-rose-700 leading-normal font-sans font-medium">
-                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low quality OCR scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid baseline audit skews.
+                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low quality OCR scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid reporting issues.
                       </p>
                     </div>
                   )}

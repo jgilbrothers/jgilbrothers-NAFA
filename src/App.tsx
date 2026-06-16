@@ -14,7 +14,11 @@ import {
   ListTodo,
   FileCheck2,
   Lock,
-  Search
+  Search,
+  UserRound,
+  Upload,
+  Download,
+  RotateCcw
 } from 'lucide-react';
 
 // Custom views
@@ -40,7 +44,7 @@ import {
 } from './data/mockData';
 
 // Types and helper calculators
-import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
+import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog, WorkspaceProfile } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile } from './utils/persistence';
 
@@ -56,41 +60,46 @@ export default function App() {
 
   // Ledger state repositories initialized with fallback default database seeds
   const [accounts, setAccounts] = useState<AccountSummary[]>(() => {
-    return initialWorkspace?.accounts ?? MOCK_ACCOUNTS;
+    return initialWorkspace?.accounts ?? [];
   });
   const [documents, setDocuments] = useState<DocumentRecord[]>(() => {
-    return initialWorkspace?.documents ?? MOCK_DOCUMENTS;
+    return initialWorkspace?.documents ?? [];
   });
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
-    return initialWorkspace?.transactions ?? MOCK_TRANSACTIONS;
+    return initialWorkspace?.transactions ?? [];
   });
   const [rules, setRules] = useState<CategoryRule[]>(() => {
-    return initialWorkspace?.rules ?? MOCK_RULES;
+    return initialWorkspace?.rules ?? [];
   });
   const [reconItems, setReconItems] = useState<ReconciliationItem[]>(() => {
-    return initialWorkspace?.reconItems ?? MOCK_RECON_ITEMS;
+    return initialWorkspace?.reconItems ?? [];
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    return initialWorkspace?.auditLogs ?? MOCK_AUDIT_LOGS;
+    return initialWorkspace?.auditLogs ?? [];
   });
   
   // Chat dialogue sequence state
   const [chatLog, setChatLog] = useState<ChatMessage[]>(() => {
-    return initialWorkspace?.chatLog ?? [
-      {
-        id: 'AI-INIT-0',
-        sender: 'assistant',
-        text: 'Welcome to Nafa Ledger. I have initialized the intelligence workspace with your ingested financial statements. Feel free to ask about spending patterns, childcare breakdowns, or potential anomalies.',
-        timestamp: new Date().toISOString()
-      }
-    ];
+    return initialWorkspace?.chatLog ?? [];
   });
 
   // General presets
   const [jurisdiction, setJurisdiction] = useState<string>(() => {
-    return initialWorkspace?.jurisdiction ?? 'North Carolina (Wake County)';
+    return initialWorkspace?.jurisdiction ?? initialWorkspace?.profile?.jurisdiction ?? 'North Carolina';
   });
   const [activeAuditLevel, setActiveAuditLevel] = useState<'all' | 'warning' | 'info'>('all');
+
+  const [profile, setProfile] = useState<WorkspaceProfile | null>(() => {
+    if (!initialWorkspace?.profile) return null;
+    return { ...initialWorkspace.profile, lastOpenedAt: new Date().toISOString(), appVersion };
+  });
+  const [profileDraft, setProfileDraft] = useState({
+    userDisplayName: initialWorkspace?.profile?.userDisplayName ?? '',
+    workspaceName: initialWorkspace?.profile?.workspaceName ?? '',
+    caseOrProjectName: initialWorkspace?.profile?.caseOrProjectName ?? '',
+    jurisdiction: initialWorkspace?.profile?.jurisdiction ?? 'North Carolina'
+  });
+
 
   // Shared state filters for navigation linking
   const [ledgerSearchFilter, setLedgerSearchFilter] = useState('');
@@ -104,7 +113,7 @@ export default function App() {
   const paletteCommands = useMemo(() => [
     {
       title: "📂 Navigate to Dashboard Overview",
-      description: "Display family status, aggregated asset classes, and summary narratives.",
+      description: "Display workspace status, account classes, and summary narratives.",
       action: () => setActiveTab('dashboard'),
       icon: "📊",
       shortcut: "G + D",
@@ -136,7 +145,7 @@ export default function App() {
     },
     {
       title: "⚙️ System Configuration Settings",
-      description: "Configure multi-jurisdictional family law, overwrite warnings, or reset sandbox.",
+      description: "Configure jurisdiction labels, backups, restore options, and reset warnings.",
       action: () => setActiveTab('settings'),
       icon: "⚙️",
       shortcut: "G + S",
@@ -151,7 +160,7 @@ export default function App() {
       keywords: "review queue corrections duplicates transfer rules"
     },
     {
-      title: "💾 Download Encrypted Offline Backup",
+      title: "💾 Download Offline Backup",
       description: "Serialize entire workbench state into reproducible client-side JSON bundle.",
       action: () => handleExportBackup(),
       icon: "💾",
@@ -229,7 +238,8 @@ export default function App() {
       reconItems,
       auditLogs,
       chatLog,
-      jurisdiction
+      jurisdiction,
+      profile
     });
     // Write a beautiful log record safely
     const timestamp = new Date().toISOString();
@@ -255,7 +265,8 @@ export default function App() {
       setReconItems(backupState.reconItems ?? []);
       setAuditLogs(backupState.auditLogs ?? []);
       setChatLog(backupState.chatLog ?? []);
-      setJurisdiction(backupState.jurisdiction ?? 'Universal Neutral Ledger');
+      setProfile(backupState.profile ?? null);
+      setJurisdiction(backupState.jurisdiction ?? backupState.profile?.jurisdiction ?? 'North Carolina');
       
       const timestamp = new Date().toISOString();
       const newLog: AuditLog = {
@@ -292,17 +303,18 @@ export default function App() {
       reconItems,
       auditLogs,
       chatLog,
-      jurisdiction
+      jurisdiction,
+      profile
     });
   }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction]);
 
-  // Unified cryptographic logging helper
+  // Unified activity logging helper
   const appendAuditLog = (action: string, details: string, level: 'info' | 'warning' | 'critical' = 'info') => {
     const timestamp = new Date().toISOString();
     const lastLog = auditLogs[auditLogs.length - 1];
     const prevHash = lastLog ? lastLog.current_entry_hash : "INITIAL_BOOTSTRAP_HASH";
     
-    // Simulate lightweight block-hashing
+    // Simulate lightweight integrity marker generation
     const payload = `${action}:${details}:${timestamp}:${prevHash}`;
     let hash = 0;
     for (let i = 0; i < payload.length; i++) {
@@ -371,7 +383,7 @@ export default function App() {
   const handleToggleJoint = (id: string) => {
     setAccounts(prev => prev.map(a => a.id === id ? { ...a, is_joint: !a.is_joint } : a));
     const changed = accounts.find(a => a.id === id);
-    appendAuditLog('TOGGLE_CUSTODY', `Modified custody type for account ${changed?.account_name}: ${!changed?.is_joint ? 'Joint' : 'Individual'}`, 'info');
+    appendAuditLog('TOGGLE_ACCOUNT_SCOPE', `Modified account scope for account ${changed?.account_name}: ${!changed?.is_joint ? 'Joint' : 'Individual'}`, 'info');
   };
 
   // Handlers: Ledger
@@ -400,7 +412,7 @@ export default function App() {
 
   const handleAddTransactionNotes = (txId: string, notes: string) => {
     setTransactions(prev => prev.map(tx => tx.transaction_id === txId ? { ...tx, notes } : tx));
-    appendAuditLog('ANNOTATE_ROW', `Added auditor commentary to transaction ${txId}: "${notes}"`, 'info');
+    appendAuditLog('ANNOTATE_ROW', `Added user note to transaction ${txId}: "${notes}"`, 'info');
   };
 
   // Handlers: Category Mapping rules
@@ -530,24 +542,43 @@ export default function App() {
     appendAuditLog('IMPORT_CSV_LEDGER', `Successfully imported statement document "${newDoc.filename}" containing ${newTxs.length} parsed transactions into direct ledger container`, 'info');
   };
 
-  // Resets ledger databases immediately
   const handleResetDatabase = () => {
     clearSavedWorkspace();
+    setAccounts([]);
+    setDocuments([]);
+    setTransactions([]);
+    setRules([]);
+    setReconItems([]);
+    setAuditLogs([]);
+    setChatLog([]);
+    setProfile(null);
+  };
+
+  const handleLoadDemoData = () => {
     setAccounts(MOCK_ACCOUNTS);
     setDocuments(MOCK_DOCUMENTS);
     setTransactions(MOCK_TRANSACTIONS);
     setRules(MOCK_RULES);
     setReconItems(MOCK_RECON_ITEMS);
     setAuditLogs(MOCK_AUDIT_LOGS);
-    setChatLog([
-      {
-        id: 'AI-INIT-RESET',
-        sender: 'assistant',
-        text: 'Nafa Ledger state container has been re-seeded. Overrides, overrides, custom accounts, and splits have been reset to factory parameters.',
-        timestamp: new Date().toISOString()
-      }
-    ]);
-    appendAuditLog('RESET_DATABASE', `Nafa Ledger container databases rolled back to pristine seed balances.`, 'warning');
+    setChatLog([]);
+    appendAuditLog('LOAD_DEMO_DATA', 'Loaded sample demo data into this local workspace.', 'warning');
+  };
+
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    const now = new Date().toISOString();
+    const nextProfile: WorkspaceProfile = {
+      userDisplayName: profileDraft.userDisplayName.trim(),
+      workspaceName: profileDraft.workspaceName.trim(),
+      caseOrProjectName: profileDraft.caseOrProjectName.trim() || undefined,
+      jurisdiction: profileDraft.jurisdiction,
+      createdAt: profile?.createdAt ?? now,
+      lastOpenedAt: now,
+      appVersion
+    };
+    setProfile(nextProfile);
+    setJurisdiction(nextProfile.jurisdiction);
   };
 
   // Filters audit footer lists
@@ -555,6 +586,29 @@ export default function App() {
     if (activeAuditLevel === 'all') return auditLogs;
     return auditLogs.filter(log => log.level === activeAuditLevel);
   }, [auditLogs, activeAuditLevel]);
+
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+        <form onSubmit={handleSaveProfile} className="w-full max-w-lg bg-white text-slate-900 rounded-2xl shadow-2xl p-6 space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 bg-emerald-500 rounded-xl flex items-center justify-center"><UserRound className="h-5 w-5 text-slate-950" /></div>
+            <div>
+              <h1 className="text-xl font-bold">Create your workspace</h1>
+              <p className="text-xs text-slate-500">Local-only profile setup. No cloud account or password is created.</p>
+            </div>
+          </div>
+          <div className="space-y-3 text-xs">
+            <label className="block font-bold">Display name<input required value={profileDraft.userDisplayName} onChange={e=>setProfileDraft({...profileDraft,userDisplayName:e.target.value})} className="mt-1 w-full border rounded-lg p-2 font-medium" placeholder="Junelle" /></label>
+            <label className="block font-bold">Workspace name<input required value={profileDraft.workspaceName} onChange={e=>setProfileDraft({...profileDraft,workspaceName:e.target.value})} className="mt-1 w-full border rounded-lg p-2 font-medium" placeholder="NC Financial Review Workspace" /></label>
+            <label className="block font-bold">Case or project name (optional)<input value={profileDraft.caseOrProjectName} onChange={e=>setProfileDraft({...profileDraft,caseOrProjectName:e.target.value})} className="mt-1 w-full border rounded-lg p-2 font-medium" placeholder="Personal review" /></label>
+            <label className="block font-bold">Jurisdiction<select value={profileDraft.jurisdiction} onChange={e=>setProfileDraft({...profileDraft,jurisdiction:e.target.value})} className="mt-1 w-full border rounded-lg p-2 font-medium"><option>North Carolina</option><option>Universal Neutral</option></select></label>
+          </div>
+          <button className="w-full bg-slate-900 hover:bg-slate-800 text-white rounded-lg py-3 text-xs font-bold uppercase">Create local workspace</button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-850 font-sans flex flex-col justify-between select-none" id="nafa-ledger-root-container">
@@ -570,19 +624,19 @@ export default function App() {
               <h1 className="text-md font-bold tracking-tight text-white font-sans">{appName}</h1>
               <span className="bg-slate-800 text-emerald-400 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">V{appVersion}</span>
             </div>
-            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Professional financial matching index & asset directories</p>
+            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Personal financial review workspace</p>
           </div>
         </div>
 
         {/* Identity block */}
         <div className="flex items-center gap-3.5 text-xs">
           <div className="hidden lg:flex flex-col items-end text-right select-none">
-            <span className="font-bold text-slate-250">Financial Ledger Workstation</span>
-            <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">MULTI-ACCOUNT MATCHING SYSTEM</span>
+            <span className="font-bold text-slate-250">{profile.workspaceName}</span>
+            <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">{profile.caseOrProjectName || `${profile.userDisplayName}'s local workspace`}</span>
           </div>
           <div className="bg-slate-950 py-1.5 px-3 border border-slate-800 rounded-lg flex items-center gap-2 font-mono text-[10px] text-slate-400">
             <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
-            <span className="font-bold">STANDALONE INTEGRITY CHECKED</span>
+            <span className="font-bold">LOCAL WORKSPACE READY</span>
           </div>
         </div>
       </header>
@@ -592,7 +646,7 @@ export default function App() {
         <div className="flex items-center gap-4 flex-wrap">
           <span className="flex items-center gap-1.5 text-zinc-300">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Database: <strong className="text-white font-bold">Encrypted Client Sandbox</strong>
+            Workspace: <strong className="text-white font-bold">{profile.workspaceName}</strong>
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-zinc-300">
@@ -622,13 +676,13 @@ export default function App() {
                 }
               }}
               className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-2.5 py-0.5 rounded cursor-pointer transition-all flex items-center gap-1 shrink-0 uppercase text-[9.5px] border border-emerald-300 animate-bounce"
-              title="Install NAFA LEDGER workstation to your host taskbar as a native window"
+              title="Install NAFA Ledger as a local app window"
             >
               🖥️ Install Desktop Client
             </button>
           ) : (
             <span className="text-[9px] bg-slate-900/60 text-slate-450 border border-slate-750 p-0.5 px-2 rounded font-semibold uppercase">
-              ✓ Hardware Client Standard
+              ✓ Local Workspace Standard
             </span>
           )}
         </div>
@@ -867,12 +921,12 @@ export default function App() {
           {/* Quick-Stats sidebar box */}
           <div className="bg-slate-900 text-slate-300 p-4 border border-slate-800 rounded-xl space-y-3 font-mono text-[10px] select-none">
             <h6 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-              <Lock className="h-3 w-3 text-emerald-400" /> Cryptographic Integrity
+              <Lock className="h-3 w-3 text-emerald-400" /> Workspace Summary
             </h6>
             <div className="space-y-1.5 text-slate-400">
               <div className="flex justify-between">
-                <span>Active Ledger ID:</span>
-                <span className="font-bold text-slate-200">NAFA-WAKE-NC</span>
+                <span>Workspace:</span>
+                <span className="font-bold text-slate-200 truncate">{profile.workspaceName}</span>
               </div>
               <div className="flex justify-between">
                 <span>Transactions Mapped:</span>
@@ -956,6 +1010,8 @@ export default function App() {
                   transactions={transactions}
                   onSendMessage={handleSendMessage}
                   onClearChat={() => setChatLog([])}
+                  onNavigate={(tab) => setActiveTab(tab)}
+                  onLoadDemoData={handleLoadDemoData}
                 />
               )}
 
@@ -964,6 +1020,7 @@ export default function App() {
                   transactions={transactions}
                   accounts={accounts}
                   documents={documents}
+                  onNavigate={(tab) => setActiveTab(tab)}
                 />
               )}
 
@@ -990,6 +1047,9 @@ export default function App() {
                   onChangeJurisdiction={(j) => setJurisdiction(j)}
                   onExportBackup={handleExportBackup}
                   onImportBackup={handleImportBackup}
+                  profile={profile}
+                  onSaveProfile={(next) => { setProfile(next); setJurisdiction(next.jurisdiction); }}
+                  onLoadDemoData={handleLoadDemoData}
                 />
               )}
             </motion.div>
@@ -998,15 +1058,15 @@ export default function App() {
 
       </div>
 
-      {/* Permanent, cryptographically chained Audit log terminal console */}
+      {/* Workspace activity log terminal console */}
       <section className="bg-slate-900 border-t border-slate-800 p-4 md:p-6" id="permanet-ledger-audits-view">
         <div className="max-w-7xl mx-auto space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-2.5 gap-2">
             <div className="flex items-center gap-2 text-white">
               <Terminal className="h-4.5 w-4.5 text-emerald-400 shrink-0" />
-              <h4 className="text-xs font-bold uppercase tracking-widest">Permanent Immutable Chain-of-Custody logs</h4>
+              <h4 className="text-xs font-bold uppercase tracking-widest">Workspace activity log</h4>
               <span className="bg-slate-800 text-slate-400 text-[9px] font-mono font-bold px-2 py-0.5 rounded">
-                SECURE BLOCKS: {auditLogs.length}
+                EVENTS: {auditLogs.length}
               </span>
             </div>
             
@@ -1060,7 +1120,7 @@ export default function App() {
 
       {/* Humble Footer */}
       <footer className="bg-slate-950 text-slate-500 text-center py-4 text-[10px] font-mono border-t border-slate-900">
-        NAFA LEDGER Compilation Software · Local browser encryption layer enabled · Multi-jurisdictional family law alignment preset
+        NAFA Ledger · Local browser workspace · Backup before resetting or switching browsers
       </footer>
 
     </div>

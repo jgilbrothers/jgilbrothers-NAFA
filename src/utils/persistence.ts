@@ -1,4 +1,4 @@
-import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage } from '../types';
+import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage, WorkspaceProfile } from '../types';
 import { ReconciliationItem } from './dataEngine';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
@@ -12,6 +12,7 @@ export interface WorkspaceState {
   auditLogs: AuditLog[];
   chatLog: ChatMessage[];
   jurisdiction: string;
+  profile: WorkspaceProfile | null;
 }
 
 /**
@@ -74,8 +75,8 @@ export function exportWorkspaceToFile(state: WorkspaceState): void {
       timestamp: new Date().toISOString(),
       metadata: {
         operator: 'OperatorAdmin',
-        client_workspace: 'NAFA-WAKE-NC',
-        purpose: 'Marital asset trace archive'
+        client_workspace: state.profile?.workspaceName || 'Local Workspace',
+        purpose: 'Workspace backup'
       },
       ...state
     };
