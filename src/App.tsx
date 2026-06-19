@@ -555,18 +555,13 @@ export default function App() {
   };
 
   const handleClearStoredFilesOnly = async () => {
-    try {
-      await clearStoredFiles();
-      setDocuments(prev => prev.map(doc => ({
-        ...doc,
-        source_file_status: doc.source_file_status === 'stored' ? 'unavailable' : doc.source_file_status,
-        local_file: doc.local_file ? { ...doc.local_file, stored: false } : doc.local_file,
-      })));
-      appendAuditLog('CLEAR_STORED_SOURCE_FILES', 'Cleared stored local source file blobs while retaining document metadata.', 'warning');
-    } catch (err) {
-      console.error(err);
-      throw err;
-    }
+    await clearStoredFiles();
+    setDocuments(prev => prev.map(doc => ({
+      ...doc,
+      source_file_status: doc.source_file_status === 'stored' ? 'unavailable' : doc.source_file_status,
+      local_file: doc.local_file ? { ...doc.local_file, stored: false } : doc.local_file,
+    })));
+    appendAuditLog('CLEAR_STORED_SOURCE_FILES', 'Cleared stored local source file blobs while retaining document metadata.', 'warning');
   };
 
   const handleLoadSampleDemoData = () => {

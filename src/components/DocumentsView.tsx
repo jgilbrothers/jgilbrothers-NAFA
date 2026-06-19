@@ -56,6 +56,18 @@ export default function DocumentsView({
     { id: 'REC-2', filename: 'Paystub_June2026_unparsed.pdf', timestamp: '2026-06-06', status: 'failed' }
   ]);
 
+  useEffect(() => {
+    if (!successNotification) return;
+    const timer = window.setTimeout(() => setSuccessNotification(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [successNotification]);
+
+  useEffect(() => {
+    if (!errorNotification) return;
+    const timer = window.setTimeout(() => setErrorNotification(null), 6500);
+    return () => window.clearTimeout(timer);
+  }, [errorNotification]);
+
   const handleRetryImport = (id: string, filename: string) => {
     setIsUploading(true);
     setTimeout(() => {
@@ -529,14 +541,12 @@ export default function DocumentsView({
       setErrorNotification(`Unable to store '${file.name}' locally. Browser storage may be unavailable or full.`);
     } finally {
       setIsUploading(false);
-      setTimeout(() => setSuccessNotification(null), 4500);
-      setTimeout(() => setErrorNotification(null), 6500);
     }
   };
 
   const showStorageError = () => {
+    setSuccessNotification(null);
     setErrorNotification('Unable to access local file storage. Browser storage may be unavailable or full.');
-    setTimeout(() => setErrorNotification(null), 6500);
   };
 
   const downloadOriginalFile = async (doc: DocumentRecord) => {
@@ -564,6 +574,10 @@ export default function DocumentsView({
     if (!confirm('Delete only the stored original source file? Document metadata and extracted transactions will remain.')) return;
     try {
       await deleteUploadedFile(doc.id);
+      if (previewFileUrl) URL.revokeObjectURL(previewFileUrl);
+      setPreviewFileUrl('');
+      setPreviewText('');
+      setPreviewFileAvailable(false);
       const updates: Partial<DocumentRecord> = { source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev ? { ...prev, ...updates } : null);
