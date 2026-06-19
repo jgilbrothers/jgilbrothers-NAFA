@@ -665,14 +665,9 @@ export default function DocumentsView({
                 onChange={e => setFormData({...formData, file_type: e.target.value as any})}
                 className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
               >
-                <option value="Checking Statement">Checking Statement</option>
-                <option value="Credit Card Statement">Credit Card Statement</option>
-                <option value="Paystub">Paystub</option>
-                <option value="Tax Document">Tax Document</option>
-                <option value="Court Document">Court Document</option>
-                <option value="Legal Order">Legal Order</option>
-                <option value="Receipt">Receipt</option>
-                <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
               </select>
             </div>
 
@@ -795,14 +790,9 @@ export default function DocumentsView({
                     onChange={e => setCsvDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
                   >
-                    <option value="Checking Statement">Checking Statement</option>
-                    <option value="Credit Card Statement">Credit Card Statement</option>
-                    <option value="Paystub">Paystub</option>
-                    <option value="Tax Document">Tax Document</option>
-                    <option value="Court Document">Court Document</option>
-                    <option value="Legal Order">Legal Order</option>
-                    <option value="Receipt">Receipt</option>
-                    <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1031,14 +1021,9 @@ export default function DocumentsView({
                     onChange={e => setPdfDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden focus:border-indigo-400"
                   >
-                    <option value="Checking Statement">Checking Statement</option>
-                    <option value="Credit Card Statement">Credit Card Statement</option>
-                    <option value="Paystub">Paystub</option>
-                    <option value="Tax Document">Tax Document</option>
-                    <option value="Court Document">Court Document</option>
-                    <option value="Legal Order">Legal Order</option>
-                    <option value="Receipt">Receipt</option>
-                    <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1412,14 +1397,9 @@ export default function DocumentsView({
                         }
                       }}
                     >
-                      <option value="Checking Statement">Checking Statement</option>
-                      <option value="Credit Card Statement">Credit Card Statement</option>
-                      <option value="Paystub">Paystub</option>
-                      <option value="Tax Document">Tax Document</option>
-                      <option value="Court Document">Court Document</option>
-                      <option value="Legal Order">Legal Order</option>
-                      <option value="Receipt">Receipt</option>
-                      <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                     </select>
                   </div>
                 </div>

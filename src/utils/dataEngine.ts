@@ -271,13 +271,9 @@ export function calculateAggregates(
     value: parseFloat(categoryTotals[cat].toFixed(2))
   })).sort((a, b) => b.value - a.value);
 
-  // Live dynamic Income vs Expense calculation
+  // Live dynamic Income vs Expense calculation. Do not seed sample months here;
+  // empty workspaces should produce empty chart arrays until real/demo transactions exist.
   const monthlyTotals: { [month: string]: { income: number; expense: number } } = {};
-  
-  // Prime with reasonable default references to keep timeline complete
-  monthlyTotals['March 2026'] = { income: 8400.00, expense: 5210.45 };
-  monthlyTotals['April 2026'] = { income: 8640.00, expense: 6194.20 };
-  monthlyTotals['May 2026'] = { income: 0, expense: 0 };
 
   nonDuplicateTransactions.forEach(tx => {
     if (tx.transfer_status === 'confirmed_transfer' || tx.category === 'Transfers') {
