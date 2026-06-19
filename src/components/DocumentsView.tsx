@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   FileUp, 
   Trash2, 
@@ -11,9 +11,13 @@ import {
   Check,
   RotateCw,
   Sparkles,
-  Layers
+  Layers,
+  Download,
+  Eye,
+  X
 } from 'lucide-react';
 import { DocumentRecord, AccountSummary, Transaction } from '../types';
+import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/fileStorage';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
@@ -46,14 +50,6 @@ export default function DocumentsView({
   const [selectedDocForPreview, setSelectedDocForPreview] = useState<DocumentRecord | null>(null);
   const [successNotification, setSuccessNotification] = useState<string | null>(null);
   
-  const [formData, setFormData] = useState({
-    filename: '',
-    file_type: 'Unknown / Needs Review' as DocumentRecord['file_type'],
-    institution_name: '',
-    statement_period: '',
-    user_notes: ''
-  });
-
   const [recentImports, setRecentImports] = useState<{id: string; filename: string; timestamp: string; status: 'completed' | 'failed'}[]>([
     { id: 'REC-1', filename: 'Chasechecking_May2026.csv', timestamp: '2026-06-05', status: 'completed' },
     { id: 'REC-2', filename: 'Paystub_June2026_unparsed.pdf', timestamp: '2026-06-06', status: 'failed' }
@@ -242,7 +238,7 @@ export default function DocumentsView({
       });
 
       if (parsed.length === 0) {
-        setPdfErrorMessage('Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.');
+        setPdfErrorMessage('Document text was not read automatically. Use Read Document Text or Import Spreadsheet Data if you want to add transactions.');
         setPdfParsedRows([]);
         setPdfPeriod('05/01/2026 - 05/31/2026');
       } else {
@@ -278,7 +274,11 @@ export default function DocumentsView({
       institution_name: pdfInstitution || selectedAcc?.institution_name || 'Generic Bank',
       statement_period: pdfPeriod || '05/01/2026 - 05/31/2026',
       processing_status: isLowConfidence ? 'Requires Verification' : 'Completed',
-      user_notes: `Structured PDF Text Import (Extracted Suffix *${suffix})`
+      user_notes: `Structured PDF Text Import (Extracted Suffix *${suffix})`,
+      source_file_status: 'metadata_only',
+      type_detected: true,
+      text_read: true,
+      transactions_extracted: pdfParsedRows.length > 0
     };
 
     // 2. Synthesize Transactions
@@ -403,7 +403,11 @@ export default function DocumentsView({
       institution_name: csvInstitution || selectedAcc?.institution_name || 'Generic Bank',
       statement_period: csvPeriod,
       processing_status: routeToReviewQueue ? 'Requires Verification' : 'Completed',
-      user_notes: 'CSV manually pasted database import'
+      user_notes: 'CSV manually pasted database import',
+      source_file_status: 'metadata_only',
+      type_detected: true,
+      text_read: true,
+      transactions_extracted: csvParsedRows.length > 0
     };
 
     // 2. Synthesize Transactions
@@ -467,7 +471,7 @@ export default function DocumentsView({
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
-      simulateFileUpload(file.name);
+      handleSourceFileUpload(file);
     }
   };
 
@@ -487,62 +491,88 @@ export default function DocumentsView({
     return 'Unknown / Needs Review';
   };
 
-  const simulateFileUpload = (name: string) => {
+  const handleSourceFileUpload = async (file: File) => {
     setIsUploading(true);
-    setTimeout(() => {
-      const detectedType = detectDocumentType(name);
-      const needsManualClassification = detectedType === 'Unknown / Needs Review';
-      onAddDocument({
-        id: `DOC-NEW-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-        filename: name,
-        upload_timestamp: new Date().toISOString(),
+    const docId = `DOC-FILE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const detectedType = detectDocumentType(file.name);
+    const needsManualClassification = detectedType === 'Unknown / Needs Review';
+    try {
+      const stored = await saveUploadedFile(docId, file);
+      const newDoc: DocumentRecord = {
+        id: docId,
+        filename: file.name,
+        original_file_name: stored.originalFileName,
+        mime_type: stored.mimeType,
+        file_size: stored.size,
+        upload_timestamp: stored.uploadedAt,
         file_type: detectedType,
-        ocr_status: 'Low Confidence',
+        ocr_status: needsManualClassification ? 'Low Confidence' : 'Pending',
         ocr_confidence: needsManualClassification ? 0.5 : 0.75,
-        institution_name: needsManualClassification ? 'Needs Review' : 'Detected',
+        institution_name: needsManualClassification ? 'Needs Review' : 'Detected from filename',
         statement_period: '',
         processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
-        user_notes: needsManualClassification
-          ? 'Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.'
-          : 'Document type detected. Please verify details and optionally associate an account.'
-      });
+        user_notes: 'Source file stored locally. Type may be detected from filename only; text has not been read and transactions have not been extracted.',
+        local_file: { storage: 'indexeddb', stored: true },
+        source_file_status: 'stored',
+        type_detected: !needsManualClassification,
+        text_read: false,
+        transactions_extracted: false,
+      };
+      onAddDocument(newDoc);
+      setRecentImports(prev => [{ id: docId, filename: file.name, timestamp: stored.uploadedAt, status: 'completed' }, ...prev].slice(0, 8));
+      setSuccessNotification(`File '${file.name}' stored locally. Text not read and transactions not extracted yet.`);
+    } catch (err) {
+      console.error(err);
+      setSuccessNotification(`Unable to store '${file.name}' locally. Browser storage may be unavailable or full.`);
+    } finally {
       setIsUploading(false);
-      
-      setSuccessNotification(needsManualClassification
-        ? `Document '${name}' uploaded. Detection needs review; open details to classify it.`
-        : `Document '${name}' uploaded. Detected ${detectedType}; please verify details.`);
-      setTimeout(() => setSuccessNotification(null), 3500);
-    }, 1200);
+      setTimeout(() => setSuccessNotification(null), 4500);
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.filename) return;
-
-    onAddDocument({
-      id: `DOC-NEW-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-      filename: formData.filename,
-      upload_timestamp: new Date().toISOString(),
-      file_type: formData.file_type,
-      ocr_status: 'Success',
-      ocr_confidence: 0.95,
-      institution_name: formData.institution_name || 'Generic Institution',
-      statement_period: formData.statement_period || '05/01/2026 - 05/31/2026',
-      processing_status: 'Completed',
-      user_notes: formData.user_notes || ''
-    });
-
-    setSuccessNotification(`Document '${formData.filename}' manually added successfully!`);
-    setTimeout(() => setSuccessNotification(null), 3500);
-
-    setFormData({
-      filename: '',
-      file_type: 'Checking Statement',
-      institution_name: '',
-      statement_period: '',
-      user_notes: ''
-    });
+  const downloadOriginalFile = async (doc: DocumentRecord) => {
+    const stored = await getUploadedFile(doc.id);
+    if (!stored?.blob) {
+      alert('Original source file is not available in this browser.');
+      return;
+    }
+    const url = URL.createObjectURL(stored.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = stored.originalFileName || doc.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
+  const deleteOriginalFileOnly = async (doc: DocumentRecord) => {
+    if (!confirm('Delete only the stored original source file? Document metadata and extracted transactions will remain.')) return;
+    await deleteUploadedFile(doc.id);
+    onUpdateDocument?.(doc.id, { source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } });
+    setSelectedDocForPreview(prev => prev ? { ...prev, source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } } : null);
+  };
+
+  const [previewFileUrl, setPreviewFileUrl] = useState('');
+  const [previewText, setPreviewText] = useState('');
+  useEffect(() => {
+    let url = '';
+    setPreviewFileUrl('');
+    setPreviewText('');
+    if (!selectedDocForPreview) return;
+    getUploadedFile(selectedDocForPreview.id).then(async stored => {
+      if (!stored?.blob) return;
+      url = URL.createObjectURL(stored.blob);
+      setPreviewFileUrl(url);
+      const mime = stored.mimeType || selectedDocForPreview.mime_type || '';
+      if (mime.startsWith('text/') || mime.includes('csv') || selectedDocForPreview.filename.toLowerCase().endsWith('.csv')) {
+        setPreviewText((await stored.blob.text()).slice(0, 20000));
+      }
+    }).catch(console.error);
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [selectedDocForPreview?.id]);
 
   const filteredDocs = documents.filter(doc => 
     doc.filename.toLowerCase().includes(searchText.toLowerCase()) ||
@@ -579,7 +609,7 @@ export default function DocumentsView({
               {isUploading ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5 text-xs text-indigo-700 font-semibold justify-center">
-                    <RotateCw className="h-3 w-3 animate-spin text-indigo-600" /> Reading document...
+                    <RotateCw className="h-3 w-3 animate-spin text-indigo-600" /> Storing file locally...
                   </div>
                   <div className="w-40 bg-slate-100 h-1 rounded overflow-hidden mx-auto">
                     <div className="bg-indigo-600 h-full animate-[loading_1s_infinite]" />
@@ -596,7 +626,7 @@ export default function DocumentsView({
                       className="hidden" 
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {
-                          simulateFileUpload(e.target.files[0].name);
+                          handleSourceFileUpload(e.target.files[0]);
                         }
                       }}
                     />
@@ -640,79 +670,15 @@ export default function DocumentsView({
           </div>
         </div>
 
-        {/* Right: Manual classification Form inputs (metadata editor) */}
+        {/* Right: source-file-first notice */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">Add Document Record Manually</h4>
-          <p className="text-xs text-slate-500 mb-4">Use this only when you want to create a document record without uploading a file.</p>
-
-          <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-            <div className="sm:col-span-2">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">File Name</label>
-              <input 
-                type="text"
-                required
-                placeholder="e.g. CardVisa_DurhamStatement.csv"
-                value={formData.filename}
-                onChange={e => setFormData({...formData, filename: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-mono outline-hidden focus:border-indigo-400"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Document Classification</label>
-              <select
-                value={formData.file_type}
-                onChange={e => setFormData({...formData, file_type: e.target.value as any})}
-                className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
-              >
-                    {DOCUMENT_TYPES.map(type => (
-                      <option key={type} value={type}>{type}</option>
-                    ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Institution name</label>
-              <input 
-                type="text"
-                placeholder="e.g. Apex Bank Trust"
-                value={formData.institution_name}
-                onChange={e => setFormData({...formData, institution_name: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-mono outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Statement Dates (Range)</label>
-              <input 
-                type="text"
-                placeholder="05/01/2026 - 05/31/2026"
-                value={formData.statement_period}
-                onChange={e => setFormData({...formData, statement_period: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-mono outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Notes / Description</label>
-              <input 
-                type="text"
-                placeholder="e.g. Joint childcare charges"
-                value={formData.user_notes}
-                onChange={e => setFormData({...formData, user_notes: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-sans outline-hidden"
-              />
-            </div>
-
-            <div className="sm:col-span-2 pt-2">
-              <button 
-                type="submit"
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-colors cursor-pointer text-center"
-              >
-                Add Document Record
-              </button>
-            </div>
-          </form>
+          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">Source-File-First Records</h4>
+          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            Manual document records are disabled. Upload a source file to create a document record.
+          </p>
+          <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-lg p-3 text-[11px] leading-relaxed">
+            Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices.
+          </div>
         </div>
 
       </div>
@@ -768,13 +734,13 @@ export default function DocumentsView({
 
               <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Association</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Match</label>
                   <select
                     value={csvAccount}
                     onChange={e => setCsvAccount(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
                   >
-                    <option value="">-- Choose Account --</option>
+                    <option value="">No account selected</option>
                     {accounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.account_name} (*{acc.account_suffix})
@@ -999,13 +965,13 @@ export default function DocumentsView({
 
               <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Association</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Match</label>
                   <select
                     value={pdfAccount}
                     onChange={e => setPdfAccount(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden focus:border-indigo-400"
                   >
-                    <option value="">-- Choose Account --</option>
+                    <option value="">No account selected</option>
                     {accounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.account_name} (*{acc.account_suffix})
@@ -1081,7 +1047,7 @@ export default function DocumentsView({
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <div className="bg-white border border-slate-200 rounded-md p-2.5 overflow-x-auto">
                   <div className="text-[9px] font-bold text-slate-405 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-                    <span className="text-slate-500 font-bold">Extracted Information Preview</span>
+                    <span className="text-slate-500 font-bold">Transactions Found Preview</span>
                     <span className="bg-indigo-50 text-indigo-700 text-[8px] font-mono font-bold px-1.5 py-0.2 rounded border border-indigo-150">Heuristic Extraction Rating: 94%</span>
                   </div>
                   <table className="w-full text-left font-mono text-[10px] divide-y divide-slate-100 font-normal">
@@ -1165,8 +1131,8 @@ export default function DocumentsView({
                 <th className="p-3">File details</th>
                 <th className="p-3">Type</th>
                 <th className="p-3">Date Range</th>
-                <th className="p-3">Rows Found</th>
-                <th className="p-3">Read Quality</th>
+                <th className="p-3">Transactions Found</th>
+                <th className="p-3">Detection Confidence</th>
                 <th className="p-3">Associated Account</th>
                 <th className="p-3">Issues Count</th>
                 <th className="p-3 text-right">Actions</th>
@@ -1242,7 +1208,7 @@ export default function DocumentsView({
                         onChange={e => onLinkAccount(doc.id, e.target.value)}
                         className="bg-slate-50 border border-slate-200 rounded p-1 text-[11px] font-semibold text-slate-800 outline-hidden focus:border-indigo-400"
                       >
-                        <option value="">-- Optional Account Association --</option>
+                        <option value="">No account selected</option>
                         {accounts.map(acc => (
                           <option key={acc.id} value={acc.id}>
                             {acc.account_name} (*{doc.file_type === 'Paystub' ? 'Associate Account' : acc.account_suffix})
@@ -1354,10 +1320,25 @@ export default function DocumentsView({
                   </span>
                 </div>
                 <div>
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Read Quality</span>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Detection Confidence</span>
                   <span className="font-bold text-emerald-600 font-mono">
                     {Math.round(selectedDocForPreview.ocr_confidence * 100)}% ({selectedDocForPreview.ocr_status})
                   </span>
+                </div>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-xs space-y-3">
+                <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Upload Truthful Status</h4>
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-emerald-900">
+                  <li>• {selectedDocForPreview.source_file_status === 'stored' ? 'File stored locally' : 'Source file unavailable in this browser'}</li>
+                  <li>• Type detected: {selectedDocForPreview.type_detected ? selectedDocForPreview.file_type : 'Not detected yet'}</li>
+                  <li>• Text {selectedDocForPreview.text_read ? 'read' : 'not read yet'}</li>
+                  <li>• Transactions {transactions.some(t => t.source_document_id === selectedDocForPreview.id) ? 'extracted/imported' : 'not extracted yet'}</li>
+                </ul>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button type="button" onClick={() => previewFileUrl ? undefined : alert('Original source file is not available in this browser.')} className="bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> View File</button>
+                  <button type="button" onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
+                  <button type="button" onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
                 </div>
               </div>
 
@@ -1405,7 +1386,7 @@ export default function DocumentsView({
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Account Association Metadata (Optional)</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Match</label>
                   <select
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-semibold text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
                     value={selectedDocForPreview.account_id || ''}
@@ -1415,13 +1396,14 @@ export default function DocumentsView({
                       setSelectedDocForPreview(prev => prev ? { ...prev, account_id: accId || undefined } : null);
                     }}
                   >
-                    <option value="">-- No Associated Account (Unassociated Metadata) --</option>
+                    <option value="">No account selected</option>
                     {accounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.account_name} (*{acc.account_suffix})
                       </option>
                     ))}
                   </select>
+                  <p className="text-[10px] text-slate-400 mt-1">Choose an account only if this document belongs with one. This does not connect to a bank.</p>
                 </div>
 
                 <div>
@@ -1466,21 +1448,36 @@ export default function DocumentsView({
                   <div className="text-slate-300 leading-relaxed text-[10px] space-y-1">
                     [EXTRACTED TEXT PREVIEW]
                     <br />
-                    Preview not available yet. Document metadata and extracted information are shown below.
+                    Preview appears here for supported locally stored files. Unsupported files can still be downloaded.
                     <br />
                     File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
                     <br />
-                    Read Quality: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
+                    Detection Confidence: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
                     <br />
-                    Read status: <strong className="text-emerald-500">{selectedDocForPreview.ocr_status === 'Success' ? 'Read' : 'Needs Review'}</strong>.
+                    Text read: <strong className="text-emerald-500">{selectedDocForPreview.text_read ? 'Yes' : 'No'}</strong>.
                   </div>
                 </div>
+              </div>
+
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
+                <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5">📎 Source File Preview</h4>
+                {!previewFileUrl ? (
+                  <div className="p-4 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg text-xs">Preview not available yet, but original file may be unavailable or still loading.</div>
+                ) : (selectedDocForPreview.mime_type?.includes('pdf') ? (
+                  <iframe src={previewFileUrl} title="PDF source preview" className="w-full h-96 rounded border border-slate-200" />
+                ) : selectedDocForPreview.mime_type?.startsWith('image/') ? (
+                  <img src={previewFileUrl} alt="Source file preview" className="max-h-96 rounded border border-slate-200 mx-auto" />
+                ) : previewText ? (
+                  <pre className="max-h-96 overflow-auto bg-slate-950 text-slate-100 rounded p-3 text-[10px] whitespace-pre-wrap">{previewText}</pre>
+                ) : (
+                  <div className="p-4 text-center text-slate-500 bg-slate-50 border border-dashed rounded-lg text-xs">Preview not available yet, but original file is stored locally. Use Download Original.</div>
+                ))}
               </div>
 
               {/* EXTRACTED INFORMATION ROW INDICES */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
                 <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5 flex items-center gap-1.5">
-                  🔍 Extracted Information Line-Items
+                  🔍 Transactions Found
                 </h4>
                 
                 <div className="text-xs space-y-2">
@@ -1506,7 +1503,7 @@ export default function DocumentsView({
                     </div>
                   ) : (
                     <div className="p-6 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg">
-                      No extracted ledger transactions are currently bound to this document. Use the advanced tools above to load transactions.
+                      No transactions have been extracted from this document yet. Use Read Document Text or Import Spreadsheet Data if you want to add transactions.
                     </div>
                   )}
                 </div>

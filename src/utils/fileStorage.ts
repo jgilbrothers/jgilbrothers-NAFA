@@ -1,0 +1,107 @@
+import { DocumentRecord } from '../types';
+
+const DB_NAME = 'nafa-ledger-source-files';
+const STORE_NAME = 'uploaded-files';
+const DB_VERSION = 1;
+
+export interface StoredUploadedFile {
+  documentId: string;
+  originalFileName: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
+  blob: Blob;
+}
+
+const openFileDb = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+  if (!('indexedDB' in window)) {
+    reject(new Error('IndexedDB is not available in this browser.'));
+    return;
+  }
+  const request = indexedDB.open(DB_NAME, DB_VERSION);
+  request.onupgradeneeded = () => {
+    const db = request.result;
+    if (!db.objectStoreNames.contains(STORE_NAME)) {
+      db.createObjectStore(STORE_NAME, { keyPath: 'documentId' });
+    }
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error || new Error('Unable to open local file storage.'));
+});
+
+const withStore = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+  const db = await openFileDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    const request = action(tx.objectStore(STORE_NAME));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Local file storage request failed.'));
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error || new Error('Local file storage transaction failed.'));
+    };
+  });
+};
+
+export async function saveUploadedFile(documentId: string, file: File): Promise<StoredUploadedFile> {
+  const record: StoredUploadedFile = {
+    documentId,
+    originalFileName: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    uploadedAt: new Date().toISOString(),
+    blob: file,
+  };
+  await withStore('readwrite', store => store.put(record));
+  return record;
+}
+
+export async function getUploadedFile(documentId: string): Promise<StoredUploadedFile | undefined> {
+  return withStore('readonly', store => store.get(documentId));
+}
+
+export async function deleteUploadedFile(documentId: string): Promise<void> {
+  await withStore('readwrite', store => store.delete(documentId));
+}
+
+export async function hasStoredFile(documentId: string): Promise<boolean> {
+  const file = await getUploadedFile(documentId);
+  return Boolean(file?.blob);
+}
+
+export async function clearStoredFiles(): Promise<void> {
+  await withStore('readwrite', store => store.clear());
+}
+
+export async function getStoredFileStats(): Promise<{ count: number; bytes: number }> {
+  const db = await openFileDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const store = tx.objectStore(STORE_NAME);
+    const request = store.openCursor();
+    let count = 0;
+    let bytes = 0;
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor) {
+        const value = cursor.value as StoredUploadedFile;
+        count += 1;
+        bytes += value.size || value.blob?.size || 0;
+        cursor.continue();
+      } else {
+        resolve({ count, bytes });
+      }
+    };
+    request.onerror = () => reject(request.error || new Error('Unable to read local file storage stats.'));
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error || new Error('Unable to read local file storage stats.'));
+    };
+  });
+}
+
+export function documentHasAvailableSourceFile(doc: DocumentRecord): boolean {
+  return doc.source_file_status === 'stored' || Boolean(doc.local_file?.stored);
+}

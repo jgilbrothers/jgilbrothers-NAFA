@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Settings, 
   MapPin, 
@@ -12,8 +12,10 @@ import {
   Upload,
   AlertTriangle,
   FileCheck,
-  ShieldAlert
+  ShieldAlert,
+  HardDrive
 } from 'lucide-react';
+import { getStoredFileStats } from '../utils/fileStorage';
 
 interface SettingsViewProps {
   onResetDatabase: () => void;
@@ -22,7 +24,15 @@ interface SettingsViewProps {
   onChangeJurisdiction: (j: string) => void;
   onExportBackup: () => void;
   onImportBackup: (backupState: any) => Promise<boolean>;
+  onClearStoredFilesOnly: () => Promise<void>;
 }
+
+const formatBytes = (bytes: number) => {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+};
 
 export default function SettingsView({ 
   onResetDatabase,
@@ -30,7 +40,8 @@ export default function SettingsView({
   jurisdiction, 
   onChangeJurisdiction,
   onExportBackup,
-  onImportBackup
+  onImportBackup,
+  onClearStoredFilesOnly
 }: SettingsViewProps) {
   const [maskSuff, setMaskSuff] = useState(true);
   const [deepScan, setDeepScan] = useState(false);
@@ -40,6 +51,21 @@ export default function SettingsView({
   const [importError, setImportError] = useState('');
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
+  const [fileStats, setFileStats] = useState({ count: 0, bytes: 0 });
+
+  const refreshFileStats = async () => {
+    setFileStats(await getStoredFileStats());
+  };
+
+  useEffect(() => {
+    refreshFileStats().catch(console.error);
+  }, []);
+
+  const handleClearStoredFilesOnly = async () => {
+    if (!confirm('Clear stored source files only? Document metadata will remain, but original files will be marked unavailable in this browser.')) return;
+    await onClearStoredFilesOnly();
+    await refreshFileStats();
+  };
 
   const handleSaveConfigs = (e: React.FormEvent) => {
     e.preventDefault();
@@ -299,7 +325,7 @@ export default function SettingsView({
               <div className="text-[9.5px] text-slate-400 font-mono text-center pt-1 leading-normal border-t border-slate-100 mt-2">
                 ⚠️ Workspace backup contains accounts, documents, transactions, categorizations, rules, and settings. 
                 <span className="block italic text-slate-400 mt-1 font-sans">
-                  This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
+                  Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
                 </span>
               </div>
 
@@ -334,6 +360,23 @@ export default function SettingsView({
                   Optional testing data; never loads automatically.
                 </span>
               </div>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+            <h5 className="text-[10px] font-bold text-slate-900 uppercase tracking-widest flex items-center gap-1">
+              <HardDrive className="h-4.5 w-4.5 text-slate-400" /> Local File Storage
+            </h5>
+            <p className="text-slate-500 leading-normal font-medium">
+              Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices.
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Stored files</span><strong>{fileStats.count}</strong></div>
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Approx. used</span><strong>{formatBytes(fileStats.bytes)}</strong></div>
+            </div>
+            <div className="space-y-2 border-t border-slate-100 pt-3">
+              <button type="button" onClick={onExportBackup} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Export Workspace Backup</button>
+              <button type="button" onClick={handleClearStoredFilesOnly} className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Clear Stored Files Only</button>
             </div>
           </div>
 
