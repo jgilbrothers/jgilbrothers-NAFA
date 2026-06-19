@@ -49,6 +49,7 @@ export default function DocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [selectedDocForPreview, setSelectedDocForPreview] = useState<DocumentRecord | null>(null);
   const [successNotification, setSuccessNotification] = useState<string | null>(null);
+  const [errorNotification, setErrorNotification] = useState<string | null>(null);
   
   const [recentImports, setRecentImports] = useState<{id: string; filename: string; timestamp: string; status: 'completed' | 'failed'}[]>([
     { id: 'REC-1', filename: 'Chasechecking_May2026.csv', timestamp: '2026-06-05', status: 'completed' },
@@ -520,56 +521,101 @@ export default function DocumentsView({
       };
       onAddDocument(newDoc);
       setRecentImports(prev => [{ id: docId, filename: file.name, timestamp: stored.uploadedAt, status: 'completed' }, ...prev].slice(0, 8));
+      setErrorNotification(null);
       setSuccessNotification(`File '${file.name}' stored locally. Text not read and transactions not extracted yet.`);
     } catch (err) {
       console.error(err);
-      setSuccessNotification(`Unable to store '${file.name}' locally. Browser storage may be unavailable or full.`);
+      setSuccessNotification(null);
+      setErrorNotification(`Unable to store '${file.name}' locally. Browser storage may be unavailable or full.`);
     } finally {
       setIsUploading(false);
       setTimeout(() => setSuccessNotification(null), 4500);
+      setTimeout(() => setErrorNotification(null), 6500);
     }
   };
 
+  const showStorageError = () => {
+    setErrorNotification('Unable to access local file storage. Browser storage may be unavailable or full.');
+    setTimeout(() => setErrorNotification(null), 6500);
+  };
+
   const downloadOriginalFile = async (doc: DocumentRecord) => {
-    const stored = await getUploadedFile(doc.id);
-    if (!stored?.blob) {
-      alert('Original source file is not available in this browser.');
-      return;
+    try {
+      const stored = await getUploadedFile(doc.id);
+      if (!stored?.blob) {
+        alert('Original source file is not available in this browser.');
+        return;
+      }
+      const url = URL.createObjectURL(stored.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = stored.originalFileName || doc.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      showStorageError();
     }
-    const url = URL.createObjectURL(stored.blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = stored.originalFileName || doc.filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   const deleteOriginalFileOnly = async (doc: DocumentRecord) => {
     if (!confirm('Delete only the stored original source file? Document metadata and extracted transactions will remain.')) return;
-    await deleteUploadedFile(doc.id);
-    onUpdateDocument?.(doc.id, { source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } });
-    setSelectedDocForPreview(prev => prev ? { ...prev, source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } } : null);
+    try {
+      await deleteUploadedFile(doc.id);
+      const updates: Partial<DocumentRecord> = { source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+      onUpdateDocument?.(doc.id, updates);
+      setSelectedDocForPreview(prev => prev ? { ...prev, ...updates } : null);
+    } catch (err) {
+      console.error(err);
+      showStorageError();
+    }
   };
 
   const [previewFileUrl, setPreviewFileUrl] = useState('');
   const [previewText, setPreviewText] = useState('');
+  const [previewFileAvailable, setPreviewFileAvailable] = useState<boolean | null>(null);
   useEffect(() => {
+    let active = true;
     let url = '';
+    const doc = selectedDocForPreview;
     setPreviewFileUrl('');
     setPreviewText('');
-    if (!selectedDocForPreview) return;
-    getUploadedFile(selectedDocForPreview.id).then(async stored => {
-      if (!stored?.blob) return;
-      url = URL.createObjectURL(stored.blob);
-      setPreviewFileUrl(url);
-      const mime = stored.mimeType || selectedDocForPreview.mime_type || '';
-      if (mime.startsWith('text/') || mime.includes('csv') || selectedDocForPreview.filename.toLowerCase().endsWith('.csv')) {
-        setPreviewText((await stored.blob.text()).slice(0, 20000));
+    setPreviewFileAvailable(null);
+    if (!doc) return;
+
+    getUploadedFile(doc.id).then(async stored => {
+      if (!active || selectedDocForPreview?.id !== doc.id) return;
+      if (!stored?.blob) {
+        setPreviewFileAvailable(false);
+        if (doc.source_file_status === 'stored' || doc.local_file?.stored) {
+          const updates: Partial<DocumentRecord> = { source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+          onUpdateDocument?.(doc.id, updates);
+          setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+        }
+        return;
       }
-    }).catch(console.error);
+      url = URL.createObjectURL(stored.blob);
+      if (!active || selectedDocForPreview?.id !== doc.id) {
+        URL.revokeObjectURL(url);
+        url = '';
+        return;
+      }
+      setPreviewFileAvailable(true);
+      setPreviewFileUrl(url);
+      const mime = stored.mimeType || doc.mime_type || '';
+      if (mime.startsWith('text/') || mime.includes('csv') || doc.filename.toLowerCase().endsWith('.csv')) {
+        const text = (await stored.blob.text()).slice(0, 20000);
+        if (active && selectedDocForPreview?.id === doc.id) setPreviewText(text);
+      }
+    }).catch(err => {
+      console.error(err);
+      if (active) showStorageError();
+    });
+
     return () => {
+      active = false;
       if (url) URL.revokeObjectURL(url);
     };
   }, [selectedDocForPreview?.id]);
@@ -1262,11 +1308,17 @@ export default function DocumentsView({
         </div>
       </div>
 
-      {/* Floating success banner notice */}
+      {/* Floating notification banners */}
       {successNotification && (
         <div className="fixed top-4 right-4 bg-emerald-900 border border-emerald-500 text-emerald-100 text-xs font-bold font-sans py-3.5 px-5 rounded-xl shadow-xl z-[999999] flex items-center gap-2.5 animate-bounce">
           <CheckCircle className="h-4.5 w-4.5 text-emerald-400 shrink-0" />
           <span>{successNotification}</span>
+        </div>
+      )}
+      {errorNotification && (
+        <div className="fixed top-4 right-4 bg-rose-950 border border-rose-500 text-rose-100 text-xs font-bold font-sans py-3.5 px-5 rounded-xl shadow-xl z-[999999] flex items-center gap-2.5">
+          <AlertCircle className="h-4.5 w-4.5 text-rose-300 shrink-0" />
+          <span>{errorNotification}</span>
         </div>
       )}
 
@@ -1329,16 +1381,18 @@ export default function DocumentsView({
 
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-xs space-y-3">
                 <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Upload Truthful Status</h4>
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-emerald-900">
-                  <li>• {selectedDocForPreview.source_file_status === 'stored' ? 'File stored locally' : 'Source file unavailable in this browser'}</li>
-                  <li>• Type detected: {selectedDocForPreview.type_detected ? selectedDocForPreview.file_type : 'Not detected yet'}</li>
-                  <li>• Text {selectedDocForPreview.text_read ? 'read' : 'not read yet'}</li>
-                  <li>• Transactions {transactions.some(t => t.source_document_id === selectedDocForPreview.id) ? 'extracted/imported' : 'not extracted yet'}</li>
-                </ul>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'Metadata only' : 'Not available in this browser'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text Reading</span>{selectedDocForPreview.text_read ? 'Text read' : selectedDocForPreview.ocr_status === 'Low Confidence' ? 'Needs review' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{transactions.some(t => t.source_document_id === selectedDocForPreview.id) ? (selectedDocForPreview.transactions_extracted ? 'Transactions found' : 'Imported manually') : 'Not extracted yet'}</div>
+                </div>
+                {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">Source file unavailable in this browser.</p>
+                )}
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <button type="button" onClick={() => previewFileUrl ? undefined : alert('Original source file is not available in this browser.')} className="bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> View File</button>
-                  <button type="button" onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
-                  <button type="button" onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
+                  <button type="button" disabled={!previewFileAvailable} onClick={() => previewFileUrl ? undefined : alert('Original source file is not available in this browser.')} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> View File</button>
+                  <button type="button" disabled={!previewFileAvailable} onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
+                  <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
                 </div>
               </div>
 
