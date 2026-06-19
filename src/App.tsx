@@ -43,6 +43,7 @@ import {
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile } from './utils/persistence';
+import { clearStoredFiles, deleteUploadedFile } from './utils/fileStorage';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -350,6 +351,7 @@ export default function App() {
   };
 
   const handleDeleteDocument = (id: string) => {
+    deleteUploadedFile(id).catch(console.error);
     setDocuments(prev => prev.filter(d => d.id !== id));
     appendAuditLog('DELETE_STATEMENT', `Removed statement log reference ID: "${id}"`, 'warning');
   };
@@ -541,6 +543,7 @@ export default function App() {
   // Resets ledger databases immediately
   const handleResetDatabase = () => {
     clearSavedWorkspace();
+    clearStoredFiles().catch(console.error);
     setAccounts([]);
     setDocuments([]);
     setTransactions([]);
@@ -551,6 +554,15 @@ export default function App() {
     setProfile(undefined);
   };
 
+  const handleClearStoredFilesOnly = async () => {
+    await clearStoredFiles();
+    setDocuments(prev => prev.map(doc => ({
+      ...doc,
+      source_file_status: doc.source_file_status === 'stored' ? 'unavailable' : doc.source_file_status,
+      local_file: doc.local_file ? { ...doc.local_file, stored: false } : doc.local_file,
+    })));
+    appendAuditLog('CLEAR_STORED_SOURCE_FILES', 'Cleared stored local source file blobs while retaining document metadata.', 'warning');
+  };
 
   const handleLoadSampleDemoData = () => {
     setAccounts(MOCK_ACCOUNTS);
@@ -1059,6 +1071,7 @@ export default function App() {
                   onChangeJurisdiction={(j) => setJurisdiction(j)}
                   onExportBackup={handleExportBackup}
                   onImportBackup={handleImportBackup}
+                  onClearStoredFilesOnly={handleClearStoredFilesOnly}
                 />
               )}
             </motion.div>

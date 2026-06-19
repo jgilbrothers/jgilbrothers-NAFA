@@ -49,6 +49,17 @@ export interface DocumentRecord {
   extracted_amount?: number;
   extracted_date?: string;
   extracted_merchant?: string;
+  original_file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+  local_file?: {
+    storage: 'indexeddb';
+    stored: boolean;
+  };
+  source_file_status?: 'stored' | 'unavailable' | 'metadata_only';
+  type_detected?: boolean;
+  text_read?: boolean;
+  transactions_extracted?: boolean;
 }
 
 export interface LinkedVerificationPayload {
