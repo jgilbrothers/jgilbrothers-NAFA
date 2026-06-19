@@ -6,9 +6,9 @@ import {
   ShieldAlert, 
   ArrowUpRight, 
   ArrowDownRight, 
-  Activity, 
   CheckCircle,
-  Play
+  Plus,
+  Upload
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -43,55 +43,49 @@ export default function DashboardView({
   unresolvedReviewCount
 }: DashboardViewProps) {
 
-  // Process data for the category chart to match Recharts expected format
+  const hasAccounts = accounts.length > 0;
+  const hasTransactions = transactions.length > 0;
   const pieData = aggregates.categorySpending.slice(0, 7);
 
   return (
     <div className="space-y-6" id="dashboard-view-container">
       
-      {/* Workflow Wizard Navigation Guidance Bar */}
+      {/* Quick Actions */}
       <div className="bg-slate-900 text-white rounded-xl shadow-sm p-4 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="h-9 w-9 bg-emerald-500/20 rounded-lg flex items-center justify-center text-emerald-400">
-            <Activity className="h-4 w-4" />
-          </div>
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">Active Workflow wizard</h4>
-            <div className="flex flex-wrap items-center text-[10px] text-slate-400 font-medium select-none mt-0.5 gap-x-2 gap-y-1">
-              <span>Upload Document</span>
-              <span className="text-slate-600">→</span>
-              <span>Classify</span>
-              <span className="text-slate-600">→</span>
-              <span>Reconcile Accounts</span>
-              <span className="text-slate-600">→</span>
-              <span>Categorize Splits</span>
-              <span className="text-slate-600">→</span>
-              <span>Review Corrections Queue</span>
-              <span className="text-slate-600">→</span>
-              <span>Generate Reports</span>
-            </div>
-          </div>
+        <div>
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-300">Quick Actions</h4>
+          <p className="text-[11px] text-slate-400 mt-0.5">Add source documents, link accounts, review items, and create reports after data is available.</p>
         </div>
-        <button 
-          onClick={() => onNavigate('documents')}
-          className="bg-emerald-600 hover:bg-emerald-500 text-[11px] font-bold uppercase py-1.5 px-3 rounded text-white flex items-center gap-1.5 transition-all self-start md:self-auto cursor-pointer"
-        >
-          <Play className="h-3 w-3 fill-current" /> Add Statements
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => onNavigate('accounts')} className="bg-white/10 hover:bg-white/15 text-[11px] font-bold uppercase py-2 px-3 rounded text-white flex items-center gap-1.5"><Plus className="h-3 w-3" /> Add Account</button>
+          <button onClick={() => onNavigate('documents')} className="bg-emerald-600 hover:bg-emerald-500 text-[11px] font-bold uppercase py-2 px-3 rounded text-white flex items-center gap-1.5"><Upload className="h-3 w-3" /> Import Statement</button>
+          <button onClick={() => onNavigate('review-queue')} className="bg-white/10 hover:bg-white/15 text-[11px] font-bold uppercase py-2 px-3 rounded text-white flex items-center gap-1.5"><CheckCircle className="h-3 w-3" /> Review Items</button>
+          <button onClick={() => onNavigate('reports')} className="bg-white/10 hover:bg-white/15 text-[11px] font-bold uppercase py-2 px-3 rounded text-white flex items-center gap-1.5"><FileCheck2 className="h-3 w-3" /> Create Report</button>
+        </div>
       </div>
 
+      {!hasAccounts && !hasTransactions && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-bold text-sm">No accounts added yet</h3><p className="text-xs text-slate-500 mt-1">Create your first account before linking statement documents.</p><button onClick={() => onNavigate('accounts')} className="mt-4 text-indigo-600 text-xs font-bold">Create your first account →</button></div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-bold text-sm">No statements imported yet</h3><p className="text-xs text-slate-500 mt-1">Upload a CSV or statement to begin extracting transactions.</p><button onClick={() => onNavigate('documents')} className="mt-4 text-indigo-600 text-xs font-bold">Upload your first statement →</button></div>
+          <div className="bg-white border border-slate-200 rounded-xl p-5"><h3 className="font-bold text-sm">Charts will appear after transactions are imported</h3><p className="text-xs text-slate-500 mt-1">You can also restore a workspace backup from Settings.</p><button onClick={() => onNavigate('settings')} className="mt-4 text-indigo-600 text-xs font-bold">Restore Backup →</button></div>
+        </div>
+      )}
+
+      {(hasAccounts || hasTransactions) && (<>
       {/* Analytical KPI Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4" id="metric-cards-grid">
+        {hasAccounts && (<>
         <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs p-5 hover:border-slate-300 transition-all flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider">Total Extracted Assets</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Total Assets</span>
               <Building2 className="h-4 w-4" />
             </div>
             <div className="text-xl font-bold font-mono tracking-tight text-slate-900 mt-2">
               ${aggregates.totalAssets.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <p className="text-[10px] text-slate-400 mt-1">Checking + Savings liquidity values</p>
+            <p className="text-[10px] text-slate-400 mt-1">Checking and savings balances from imported account data</p>
           </div>
           <div className="pt-3 border-t border-slate-100 mt-3">
             <button onClick={() => onNavigate('accounts')} className="text-indigo-600 text-[10px] font-bold uppercase hover:underline text-left">
@@ -103,7 +97,7 @@ export default function DashboardView({
         <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs p-5 hover:border-slate-300 transition-all flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider">Total Recorded Liabilities</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Total Liabilities</span>
               <TrendingUp className="h-4 w-4" />
             </div>
             <div className="text-xl font-bold font-mono tracking-tight text-slate-900 mt-2">
@@ -121,19 +115,22 @@ export default function DashboardView({
         <div className="bg-white border border-slate-200/90 rounded-xl shadow-xs p-5 hover:border-slate-300 transition-all flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-slate-400">
-              <span className="text-[10px] font-bold uppercase tracking-wider">Net Extractable Capital</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider">Net Balance</span>
               <FileCheck2 className="h-4 w-4" />
             </div>
             <div className="text-xl font-bold font-mono tracking-tight text-emerald-600 mt-2">
               ${aggregates.netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <p className="text-[10px] text-slate-400 mt-1">Marital accounts balance difference</p>
+            <p className="text-[10px] text-slate-400 mt-1">Account balance difference</p>
           </div>
           <div className="pt-3 border-t border-slate-100 mt-3">
-            <span className="text-[10px] font-bold text-slate-500">NC-FAMILY LAW PRESET APPROVED</span>
+            <span className="text-[10px] font-bold text-slate-500">Workspace profile active</span>
           </div>
         </div>
 
+        </>)}
+
+        {hasTransactions && (
         <div className={`rounded-xl shadow-xs p-5 transition-all border flex flex-col justify-between ${
           unresolvedReviewCount > 0 
             ? 'bg-amber-50/70 border-amber-200 text-amber-900' 
@@ -160,9 +157,11 @@ export default function DashboardView({
             </button>
           </div>
         </div>
+        )}
       </div>
 
       {/* Grid containing Charts */}
+      {hasTransactions ? (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Left columns: Category Spending & Income Flow Chart */}
@@ -172,7 +171,7 @@ export default function DashboardView({
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5">
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-slate-900" />
-              Ingested Cash Balance Flow vs Debt Spending
+              Imported Income vs Debits
             </h4>
             <div className="h-64 font-mono text-[10px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -236,7 +235,7 @@ export default function DashboardView({
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5">
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-slate-900" />
-              Debit Categorizations
+              Debit Categories
             </h4>
             
             <div className="h-48 flex items-center justify-center font-mono text-[10px]">
@@ -280,9 +279,9 @@ export default function DashboardView({
           {/* Quick Alert list */}
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
             <div>
-              <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unclassified Audit Warning Indicator</h5>
+              <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Unclassified Review Indicator</h5>
               <p className="text-xs text-slate-600 mt-1">
-                Outstanding unclassified debit accounts: **{aggregates.unclassifiedTransactionsCount} rows**.
+                Outstanding unclassified transactions: **{aggregates.unclassifiedTransactionsCount} rows**.
               </p>
             </div>
             
@@ -305,6 +304,14 @@ export default function DashboardView({
         </div>
 
       </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-center space-y-2">
+          <h3 className="text-sm font-bold text-slate-900">Accounts added. Import statements to generate charts and financial summaries.</h3>
+          <p className="text-xs text-slate-500">Transaction charts, recent activity, category summaries, and review indicators will appear after transactions are imported.</p>
+          <button onClick={() => onNavigate('documents')} className="text-indigo-600 text-xs font-bold hover:underline">Import Statement →</button>
+        </div>
+      )}
+      </>)}
 
     </div>
   );

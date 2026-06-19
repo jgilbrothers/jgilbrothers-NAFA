@@ -254,7 +254,7 @@ export default function DocumentsView({
 
   const handleImportPdf = () => {
     if (!pdfAccount) {
-      setPdfErrorMessage('Please bind this PDF Statement to a related custody account.');
+      setPdfErrorMessage('Please bind this PDF Statement to a related account.');
       return;
     }
 
@@ -385,7 +385,7 @@ export default function DocumentsView({
       return;
     }
     if (!csvAccount) {
-      setCsvErrorMessage('Please select a target custody account for this statement.');
+      setCsvErrorMessage('Please select a target account for this statement.');
       return;
     }
 
@@ -1123,7 +1123,7 @@ export default function DocumentsView({
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div>
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Ingested Statements Ledger Vault</h4>
-            <p className="text-[10px] text-slate-500 mt-0.5">Documents mapped as audit segments are isolated by cryptographic hashes in the workspace.</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Documents are indexed locally so you can link source documents to accounts and transactions.</p>
           </div>
 
           <div className="relative w-full sm:w-64">

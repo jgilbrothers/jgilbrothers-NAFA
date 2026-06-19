@@ -360,7 +360,7 @@ export function generateNarrativeFromSummary(summary: Partial<AnalysisSummary> &
 
   } else {
     txt += `Local ledger analysis calculated net balance adjustments representing total cash flow indicators of **$${total.toFixed(2)}** mowed through **${count} active accounts**.\n\n`;
-    txt += `Your current workspace registers complete transaction fidelity, with all data-backed metrics maintained locally on your computer.`;
+    txt += `Your current workspace registers complete transaction coverage, with all data-backed metrics maintained locally on your computer.`;
   }
 
   return txt;
@@ -377,12 +377,12 @@ export async function optionalGeminiNarrative(
   apiKey?: string
 ): Promise<string> {
   if (!apiKey) {
-    // Safe, high-compliance local fallback narrative directly generated
+    // Safe, local fallback narrative directly generated
     return `*[Local Analysis Mode Enabled]*\n\n${contextSummary}`;
   }
 
   try {
-    // Dynamic import to abide by client environment isolation protocols
+    // Dynamic import to abide by client environment boundaries
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({
       apiKey,
@@ -395,16 +395,16 @@ export async function optionalGeminiNarrative(
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
-      contents: `You are an expert impartial financial audit analyzer. Here is a locally pre-filtered analysis context summary of a user's financial accounts:
+      contents: `You are an expert impartial financial analysis assistant. Here is a locally pre-filtered analysis context summary of a user's financial accounts:
 ${contextSummary}
 
 Please interpret and write an objective, rigorous explanatory narrative for the user's query: "${query}".
-Do NOT perform your own raw math or alter any of the calculated totals. Stick strictly to the facts provided. Use neutral, professional tone. Avoid dramatic forensic or legal terminology.`,
+Do NOT perform your own raw math or alter any of the calculated totals. Stick strictly to the facts provided. Use neutral, professional tone. Use plain, neutral financial review terminology.`,
     });
 
     return response.text || contextSummary;
   } catch (err: any) {
-    console.warn("Opt-in Gemini API invoke failed. Falling back to high-grade local baseline narrative engine:", err);
+    console.warn("Opt-in Gemini API invoke failed. Falling back to local baseline narrative engine:", err);
     return `*[Local Fallback Mode - Gemini Engine offline: ${err.message}]*\n\n${contextSummary}`;
   }
 }

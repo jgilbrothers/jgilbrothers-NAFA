@@ -31,6 +31,8 @@ interface AiAnalysisWorkspaceProps {
   transactions: Transaction[];
   onSendMessage: (msg: ChatMessage) => void;
   onClearChat: () => void;
+  onNavigate: (tab: string) => void;
+  onLoadDemoData: () => void;
 }
 
 const COLORS = ['#1e293b', '#64748b', '#0f766e', '#0d9488', '#3b82f6', '#4f46e5'];
@@ -39,19 +41,21 @@ export default function AiAnalysisWorkspace({
   chatLog,
   transactions,
   onSendMessage,
-  onClearChat
+  onClearChat,
+  onNavigate,
+  onLoadDemoData
 }: AiAnalysisWorkspaceProps) {
   const [inputText, setInputText] = useState('');
   const [savedReports, setSavedReports] = useState<{[key: string]: boolean}>({});
 
   const quickPrompts = [
-    'Find unilateral cash or transfer routing anomalies',
+    'Find unusual cash or transfer activity',
     'What is the child-related childcare expenses total?',
     'Show me category spending charts'
   ];
 
   const handleSend = (text: string) => {
-    if (!text.trim()) return;
+    if (!text.trim() || transactions.length === 0) return;
 
     // Send user message
     const userMsg: ChatMessage = {
@@ -131,7 +135,7 @@ export default function AiAnalysisWorkspace({
               <tr className="border-b bg-slate-50 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
                 <th className="p-1 px-2.5">Extracted Segment</th>
                 <th className="p-1 px-2.5">Amount</th>
-                <th className="p-1 px-2.5">Audit Note</th>
+                <th className="p-1 px-2.5">Review Note</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -161,7 +165,7 @@ export default function AiAnalysisWorkspace({
             <Sparkles className="h-4 w-4 text-indigo-600 animate-pulse" />
             AI Analytical Chat assistant
           </h4>
-          <p className="text-xs text-slate-500 mt-0.5">Explore cash routing, category totals, and hidden unilateral flows with conversational AI queries.</p>
+          <p className="text-xs text-slate-500 mt-0.5">Explore cash routing, category totals, and notable transfer activity with conversational AI queries.</p>
         </div>
 
         <button
@@ -172,6 +176,19 @@ export default function AiAnalysisWorkspace({
         </button>
       </div>
 
+      {transactions.length === 0 ? (
+        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
+          <Bot className="h-10 w-10 mx-auto text-slate-400" />
+          <div>
+            <h3 className="text-sm font-bold text-slate-900">No transaction data available yet.</h3>
+            <p className="text-xs text-slate-500 mt-1">Import statements before running financial analysis.</p>
+          </div>
+          <div className="flex justify-center gap-2">
+            <button onClick={() => onNavigate('documents')} className="bg-slate-900 text-white rounded-lg px-4 py-2 text-xs font-bold">Import Statement</button>
+            <button onClick={onLoadDemoData} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Load Demo Data</button>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
 
         {/* Left: Chat history & workspace logs */}
@@ -319,7 +336,7 @@ export default function AiAnalysisWorkspace({
         {/* Right: Quick prompts templates list */}
         <div className="lg:col-span-1 space-y-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
-            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Selected Quick Audits</h5>
+            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Selected Quick Prompts</h5>
             <p className="text-[11px] text-slate-500">Tap standard query sequences to trigger the AI analysis system quickly.</p>
 
             <div className="space-y-2">
@@ -347,6 +364,7 @@ export default function AiAnalysisWorkspace({
         </div>
 
       </div>
+      )}
 
     </div>
   );

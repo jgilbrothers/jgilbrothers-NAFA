@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { WorkspaceProfile } from '../types';
 import { 
   Settings, 
   MapPin, 
@@ -21,6 +22,9 @@ interface SettingsViewProps {
   onChangeJurisdiction: (j: string) => void;
   onExportBackup: () => void;
   onImportBackup: (backupState: any) => Promise<boolean>;
+  profile: WorkspaceProfile;
+  onSaveProfile: (profile: WorkspaceProfile) => void;
+  onLoadDemoData: () => void;
 }
 
 export default function SettingsView({ 
@@ -28,7 +32,10 @@ export default function SettingsView({
   jurisdiction, 
   onChangeJurisdiction,
   onExportBackup,
-  onImportBackup
+  onImportBackup,
+  profile,
+  onSaveProfile,
+  onLoadDemoData
 }: SettingsViewProps) {
   const [maskSuff, setMaskSuff] = useState(true);
   const [deepScan, setDeepScan] = useState(false);
@@ -38,6 +45,11 @@ export default function SettingsView({
   const [importError, setImportError] = useState('');
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
+  const [profileDraft, setProfileDraft] = useState(profile);
+
+  useEffect(() => {
+    setProfileDraft(profile);
+  }, [profile]);
 
   const handleSaveConfigs = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +60,7 @@ export default function SettingsView({
   };
 
   const handleFullReset = () => {
-    if (confirm('Are you absolutely sure you want to reset and re-seed the sample data? This will overwrite your current workspace variables.')) {
+    if (confirm('Reset workspace? This removes local workspace data from this browser unless backed up first.')) {
       onResetDatabase();
       setShowSeedMsg(true);
       setTimeout(() => {
@@ -112,8 +124,8 @@ export default function SettingsView({
 
       {/* Description headings */}
       <div>
-        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">System configuration settings</h4>
-        <p className="text-xs text-slate-500 mt-0.5">Define ledger jurisdictions presets, configure client SSN/suffix masking levels, and manage database memory records.</p>
+        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Workspace Settings</h4>
+        <p className="text-xs text-slate-500 mt-0.5">Edit your local workspace profile, backups, restore options, reset controls, and sample data.</p>
       </div>
 
       {showSavedMsg && (
@@ -124,7 +136,7 @@ export default function SettingsView({
 
       {showSeedMsg && (
         <div className="bg-indigo-50 text-indigo-800 border border-indigo-200 text-xs p-3.5 rounded-xl flex items-center gap-2 select-none">
-          <RotateCcw className="h-4 w-4 text-indigo-600" /> Database re-seeded! Mapped 4 registered accounts, 5 PDF statement documents, keywords rules, and ledger raw logs.
+          <RotateCcw className="h-4 w-4 text-indigo-600" /> Workspace reset. Local financial data was removed from this browser.
         </div>
       )}
 
@@ -155,7 +167,7 @@ export default function SettingsView({
               onClick={confirmRestore}
               className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded-lg transition-colors cursor-pointer shadow-xs"
             >
-              Overide and Restore
+              Overwrite and Restore
             </button>
             <button
               onClick={() => {
@@ -170,7 +182,7 @@ export default function SettingsView({
         </div>
       )}
 
-      <form onSubmit={handleSaveConfigs} className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs text-slate-900">
+      <form onSubmit={(e) => { handleSaveConfigs(e); onSaveProfile({ ...profileDraft, lastOpenedAt: new Date().toISOString() }); }} className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs text-slate-900">
         
         {/* Left Column: Toggles */}
         <div className="lg:col-span-2 space-y-4">
@@ -178,11 +190,14 @@ export default function SettingsView({
           {/* Jurisdiction Preset Card */}
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-3">
             <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-              <MapPin className="h-4 w-4 text-slate-400" /> Court Jurisdiction Guidelines Mappings
+              <MapPin className="h-4 w-4 text-slate-400" /> Workspace Profile
             </h5>
-            <p className="text-xs text-slate-550 leading-normal">
-              Selecting custom jurisdictions injects localized financial schedule presets, marital property categories, and statutory thresholds to align automatic reports format.
-            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <label className="font-bold">Display name<input value={profileDraft.userDisplayName} onChange={e => setProfileDraft({ ...profileDraft, userDisplayName: e.target.value })} className="mt-1 w-full border border-slate-200 rounded p-2 font-medium" /></label>
+              <label className="font-bold">Workspace name<input value={profileDraft.workspaceName} onChange={e => setProfileDraft({ ...profileDraft, workspaceName: e.target.value })} className="mt-1 w-full border border-slate-200 rounded p-2 font-medium" /></label>
+              <label className="font-bold sm:col-span-2">Case or project name<input value={profileDraft.caseOrProjectName || ''} onChange={e => setProfileDraft({ ...profileDraft, caseOrProjectName: e.target.value })} className="mt-1 w-full border border-slate-200 rounded p-2 font-medium" /></label>
+            </div>
+            <p className="text-xs text-slate-550 leading-normal">Choose the default jurisdiction label for this local workspace.</p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <label className={`border rounded-lg p-3 cursor-pointer flex items-center gap-2 transition-all ${
@@ -194,30 +209,30 @@ export default function SettingsView({
                   type="radio"
                   name="jurisdiction"
                   checked={jurisdiction.includes('North Carolina')}
-                  onChange={() => onChangeJurisdiction('North Carolina (Wake County)')}
+                  onChange={() => { onChangeJurisdiction('North Carolina'); setProfileDraft({ ...profileDraft, jurisdiction: 'North Carolina' }); }}
                   className="h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"
                 />
                 <div className="min-w-0">
-                  <span className="font-bold block">NC family Law Preset</span>
-                  <span className="text-[10px] text-slate-400 font-mono">NC-family-v1 default support rules</span>
+                  <span className="font-bold block">North Carolina</span>
+                  <span className="text-[10px] text-slate-400 font-mono">Default workspace jurisdiction</span>
                 </div>
               </label>
 
               <label className={`border rounded-lg p-3 cursor-pointer flex items-center gap-2 transition-all ${
-                jurisdiction === 'Universal Neutral Ledger'
+                jurisdiction === 'Universal Neutral'
                   ? 'bg-indigo-50/50 border-indigo-200 text-slate-900'
                   : 'bg-white border-slate-200 text-slate-600'
               }`}>
                 <input 
                   type="radio"
                   name="jurisdiction"
-                  checked={jurisdiction === 'Universal Neutral Ledger'}
-                  onChange={() => onChangeJurisdiction('Universal Neutral Ledger')}
+                  checked={jurisdiction === 'Universal Neutral'}
+                  onChange={() => { onChangeJurisdiction('Universal Neutral'); setProfileDraft({ ...profileDraft, jurisdiction: 'Universal Neutral' }); }}
                   className="h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"
                 />
                 <div className="min-w-0">
-                  <span className="font-bold block">Universal Neutral rules</span>
-                  <span className="text-[10px] text-slate-400 font-mono">neutral-v1 multi-state templates</span>
+                  <span className="font-bold block">Universal Neutral</span>
+                  <span className="text-[10px] text-slate-400 font-mono">General financial review</span>
                 </div>
               </label>
             </div>
@@ -268,7 +283,7 @@ export default function SettingsView({
               <Database className="h-4.5 w-4.5 text-slate-400" /> Database Local Memory management
             </h5>
             <p className="text-slate-500 leading-normal font-medium">
-              Milestone 6 runs completely in client-side secure browser sandbox memory. Any custom accounts, file classifications, or overrides reside locally in state context.
+              Milestone 6 runs completely in client-side browser storage. Any custom accounts, file classifications, or overrides reside locally in state context.
             </p>
 
             <div className="space-y-2 border-t border-slate-100 pt-3">
@@ -278,13 +293,13 @@ export default function SettingsView({
                 onClick={onExportBackup}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
               >
-                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Workspace Archive
+                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Workspace Backup
               </button>
 
               {/* Local Restore Importer Trigger Button via standard browser file selector */}
               <div className="relative">
                 <label className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm">
-                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Import Workspace Archive
+                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Restore Workspace Backup
                   <input
                     type="file"
                     accept=".json"
@@ -297,31 +312,37 @@ export default function SettingsView({
               <div className="text-[9.5px] text-slate-400 font-mono text-center pt-1 leading-normal border-t border-slate-100 mt-2">
                 ⚠️ Workspace backup contains accounts, documents, transactions, categorizations, rules, and settings. 
                 <span className="block italic text-slate-400 mt-1 font-sans">
-                  This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
+                  This archive is a workspace backup and not a substitute for original bank statements.
                 </span>
               </div>
 
               <div className="pt-2 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={handleFullReset}
-                  className="w-full bg-red-800 hover:bg-red-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  onClick={onLoadDemoData}
+                  className="w-full bg-indigo-700 hover:bg-red-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" /> Re-seed Sample Ledger Data
+                  <Sparkles className="h-3.5 w-3.5" /> Replace with Sample Demo Data
                 </button>
                 <span className="text-[9px] text-slate-400 block mt-1.5 text-center font-sans font-medium">
-                  Clears overrides and resets database to match default seeded statements.
+                  Replaces workspace data with sample accounts, statements, transactions, rules, and review items after confirmation.
                 </span>
+              </div>
+              <div className="pt-2 border-t border-slate-100">
+                <button type="button" onClick={handleFullReset} className="w-full bg-red-800 hover:bg-red-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm">
+                  <RotateCcw className="h-3.5 w-3.5" /> Reset Workspace
+                </button>
+                <span className="text-[9px] text-slate-400 block mt-1.5 text-center font-sans font-medium">Reset removes local workspace data from this browser unless backed up first.</span>
               </div>
             </div>
           </div>
 
           <div className="bg-indigo-950 text-indigo-100 rounded-xl p-5 border border-indigo-900 space-y-3 select-none">
             <h6 className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest flex items-center gap-1">
-              <BookOpen className="h-3.5 w-3.5" /> Audit & Validation Checklist
+              <BookOpen className="h-3.5 w-3.5" /> Review & Validation Checklist
             </h6>
             <p className="text-[11px] leading-relaxed text-indigo-200">
-              NAFA Ledger is built upon accepted financial accounting practices:
+              NAFA Ledger supports common financial review practices:
             </p>
             <ul className="space-y-1 text-[10px] font-mono text-indigo-300">
               <li>✔ Clear identification of internal transfers.</li>
@@ -338,7 +359,7 @@ export default function SettingsView({
             type="submit"
             className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-6 rounded transition-colors cursor-pointer"
           >
-            Commit Default Configurations
+            Save Workspace Settings
           </button>
         </div>
 

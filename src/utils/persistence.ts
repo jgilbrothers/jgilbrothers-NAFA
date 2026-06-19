@@ -1,7 +1,8 @@
-import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage } from '../types';
+import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage, WorkspaceProfile } from '../types';
 import { ReconciliationItem } from './dataEngine';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
+export const SAVED_REPORT_SESSIONS_KEY = 'nafa_saved_reported_sessions_v1';
 
 export interface WorkspaceState {
   accounts: AccountSummary[];
@@ -12,6 +13,7 @@ export interface WorkspaceState {
   auditLogs: AuditLog[];
   chatLog: ChatMessage[];
   jurisdiction: string;
+  profile: WorkspaceProfile | null;
 }
 
 /**
@@ -73,9 +75,9 @@ export function exportWorkspaceToFile(state: WorkspaceState): void {
       schema_version: 'nafa-ledger-v3-backup',
       timestamp: new Date().toISOString(),
       metadata: {
-        operator: 'OperatorAdmin',
-        client_workspace: 'NAFA-WAKE-NC',
-        purpose: 'Marital asset trace archive'
+        operator: 'LocalUser',
+        client_workspace: state.profile?.workspaceName || 'Local Workspace',
+        purpose: 'Workspace backup'
       },
       ...state
     };
@@ -104,3 +106,15 @@ export function clearSavedWorkspace(): void {
   }
 }
 
+
+
+/**
+ * Clears saved report sessions created outside the main workspace state.
+ */
+export function clearSavedReportSessions(): void {
+  try {
+    localStorage.removeItem(SAVED_REPORT_SESSIONS_KEY);
+  } catch (err) {
+    console.error('Failed to clear saved report sessions:', err);
+  }
+}
