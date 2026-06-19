@@ -37,7 +37,7 @@ export interface DocumentRecord {
   id: string;
   filename: string;
   upload_timestamp: string;
-  file_type: 'Checking' | 'Savings' | 'Credit Card' | 'Loan' | 'Mortgage' | 'Paystub' | 'Receipt' | 'Tax' | 'Legal' | 'Unidentified';
+  file_type: 'Bank Statement' | 'Credit Card Statement' | 'Paystub' | 'Tax Document' | 'Court Filing' | 'Legal Order' | 'Receipt' | 'Other' | 'Unidentified';
   ocr_status: 'Pending' | 'Success' | 'Low Confidence' | 'Failed';
   ocr_confidence: number; // 0.0 - 1.0
   account_id?: string;
@@ -46,6 +46,23 @@ export interface DocumentRecord {
   user_notes?: string;
   processing_status: 'Completed' | 'Requires Classification' | 'Requires Verification' | 'Processing';
   raw_text?: string;
+}
+
+export interface LinkedVerificationPayload {
+  handshake_id: string;
+  timestamp: string;
+  client_app_id: string;
+  requested_features: ('averages' | 'trends' | 'categories')[];
+  authorized_ranges: {
+    start_date: string;
+    end_date: string;
+  };
+  metrics_summary: {
+    monthly_historical_average: number;
+    transaction_count: number;
+    discretionary_ratio: number;
+  };
+  hmac_signature?: string;
 }
 
 export interface CategoryRule {
@@ -115,15 +132,4 @@ export interface ChatMessage {
   calculated_total?: number;
   sources?: string[];
   query_type?: string;
-}
-
-
-export interface WorkspaceProfile {
-  userDisplayName: string;
-  workspaceName: string;
-  caseOrProjectName?: string;
-  jurisdiction: string;
-  createdAt: string;
-  lastOpenedAt: string;
-  appVersion: string;
 }

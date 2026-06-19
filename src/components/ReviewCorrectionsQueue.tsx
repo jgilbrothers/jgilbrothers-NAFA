@@ -35,14 +35,14 @@ export default function ReviewCorrectionsQueue({
 
       {/* Description headings */}
       <div>
-        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Review & Corrections Queue</h4>
+        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Needs Review & Corrections Vault</h4>
         <p className="text-xs text-slate-500 mt-0.5">Examine ledger discrepancy logs, approve low OCR reads, suppress statement duplicate errors, and verify bilateral transfers.</p>
       </div>
 
       {reconciliationItems.filter(r => r.status === 'Unresolved').length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400 select-none space-y-2">
           <CopyCheck className="h-8 w-8 text-emerald-500 mx-auto" />
-          <p className="text-xs font-bold text-slate-900">Review & Corrections Queue is completely pristine!</p>
+          <p className="text-xs font-bold text-slate-900">Needs Review list is completely pristine!</p>
           <p className="text-[10px] text-slate-500">Every OCR warning, duplicate transaction overlay, and transfer loop has been fully certified and closed.</p>
         </div>
       ) : (

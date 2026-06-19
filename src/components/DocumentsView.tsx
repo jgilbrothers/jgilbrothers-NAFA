@@ -24,6 +24,7 @@ interface DocumentsViewProps {
   onLinkAccount: (docId: string, accountId: string) => void;
   onImportTransactions?: (txs: Transaction[], doc: DocumentRecord) => void;
   onViewExtractedTransactions?: (docId: string) => void;
+  onUpdateDocument?: (docId: string, updates: Partial<DocumentRecord>) => void;
 }
 
 export default function DocumentsView({
@@ -34,14 +35,18 @@ export default function DocumentsView({
   onDeleteDocument,
   onLinkAccount,
   onImportTransactions,
-  onViewExtractedTransactions
+  onViewExtractedTransactions,
+  onUpdateDocument
 }: DocumentsViewProps) {
   const [dragActive, setDragActive] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedDocForPreview, setSelectedDocForPreview] = useState<DocumentRecord | null>(null);
+  const [successNotification, setSuccessNotification] = useState<string | null>(null);
+  
   const [formData, setFormData] = useState({
     filename: '',
-    file_type: 'Checking' as DocumentRecord['file_type'],
+    file_type: 'Bank Statement' as DocumentRecord['file_type'],
     institution_name: '',
     statement_period: '',
     user_notes: ''
@@ -60,7 +65,7 @@ export default function DocumentsView({
         id: retryId,
         filename: filename.replace('_unparsed', ''),
         upload_timestamp: new Date().toISOString(),
-        file_type: 'Checking',
+        file_type: 'Bank Statement',
         ocr_status: 'Success',
         ocr_confidence: 0.98,
         institution_name: 'Metro National Bank',
@@ -254,7 +259,7 @@ export default function DocumentsView({
 
   const handleImportPdf = () => {
     if (!pdfAccount) {
-      setPdfErrorMessage('Please bind this PDF Statement to a related account.');
+      setPdfErrorMessage('Please bind this PDF Statement to a related custody account.');
       return;
     }
 
@@ -385,7 +390,7 @@ export default function DocumentsView({
       return;
     }
     if (!csvAccount) {
-      setCsvErrorMessage('Please select a target account for this statement.');
+      setCsvErrorMessage('Please select a target custody account for this statement.');
       return;
     }
 
@@ -481,7 +486,7 @@ export default function DocumentsView({
         id: `DOC-NEW-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
         filename: name,
         upload_timestamp: new Date().toISOString(),
-        file_type: 'Checking',
+        file_type: 'Bank Statement',
         ocr_status: 'Success',
         ocr_confidence: parseFloat((0.85 + Math.random() * 0.14).toFixed(2)),
         institution_name: 'Metro National Bank',
@@ -490,6 +495,9 @@ export default function DocumentsView({
         user_notes: 'User uploaded statement simulation'
       });
       setIsUploading(false);
+      
+      setSuccessNotification(`Document '${name}' successfully uploaded and categorized!`);
+      setTimeout(() => setSuccessNotification(null), 3500);
     }, 1200);
   };
 
@@ -510,9 +518,12 @@ export default function DocumentsView({
       user_notes: formData.user_notes || ''
     });
 
+    setSuccessNotification(`Document '${formData.filename}' manually added successfully!`);
+    setTimeout(() => setSuccessNotification(null), 3500);
+
     setFormData({
       filename: '',
-      file_type: 'Checking',
+      file_type: 'Bank Statement',
       institution_name: '',
       statement_period: '',
       user_notes: ''
@@ -534,9 +545,9 @@ export default function DocumentsView({
         {/* Left: Drag & Drop Ingestion Zone */}
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Ingest Statements Document Folder</h4>
-            <p className="text-xs text-slate-500 mb-4">
-              Simulate dragging or selecting transaction file records. Statements are parsed server-side against standard OCR templates.
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Upload Documents Folder</h4>
+            <p className="text-xs text-slate-500 mb-4 font-sans">
+              Drag or select document files here. Documents are parsed natively on the backend page worker to retrieve context instantly.
             </p>
 
             <div 
@@ -634,17 +645,20 @@ export default function DocumentsView({
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Statement Type</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Document Classification</label>
               <select
                 value={formData.file_type}
                 onChange={e => setFormData({...formData, file_type: e.target.value as any})}
                 className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
               >
-                <option value="Checking">Checking Account</option>
-                <option value="Savings">Savings Account</option>
-                <option value="Credit Card">Credit Card</option>
-                <option value="Receipt">Receipt Document</option>
-                <option value="Paystub">Paystub Segment</option>
+                <option value="Bank Statement">Bank Statement</option>
+                <option value="Credit Card Statement">Credit Card Statement</option>
+                <option value="Paystub">Paystub</option>
+                <option value="Tax Document">Tax Document</option>
+                <option value="Court Filing">Court Filing</option>
+                <option value="Legal Order">Legal Order</option>
+                <option value="Receipt">Receipt</option>
+                <option value="Other">Other</option>
               </select>
             </div>
 
@@ -767,10 +781,14 @@ export default function DocumentsView({
                     onChange={e => setCsvDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
                   >
-                    <option value="Checking">Checking Account</option>
-                    <option value="Savings">Savings Account</option>
-                    <option value="Credit Card">Credit Card</option>
-                    <option value="Receipt">Receipt Ledger</option>
+                    <option value="Bank Statement">Bank Statement</option>
+                    <option value="Credit Card Statement">Credit Card Statement</option>
+                    <option value="Paystub">Paystub</option>
+                    <option value="Tax Document">Tax Document</option>
+                    <option value="Court Filing">Court Filing</option>
+                    <option value="Legal Order">Legal Order</option>
+                    <option value="Receipt">Receipt</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
 
@@ -937,8 +955,8 @@ export default function DocumentsView({
               <Sparkles className="h-4 w-4 text-indigo-600" />
             </div>
             <div>
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Structured PDF Statement Text Parser (OCR Core)</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Paste raw statement copy or text-based PDF content to extract dates, vendors, credits, and active balances.</p>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Extract Information (Read Document Text)</h4>
+              <p className="text-[10px] text-slate-500 mt-0.5">Paste raw document text or file copy to extract active dates, raw vendors, transactions, and child balances immediately.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -999,11 +1017,14 @@ export default function DocumentsView({
                     onChange={e => setPdfDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden focus:border-indigo-400"
                   >
-                    <option value="Checking">Checking Account</option>
-                    <option value="Savings">Savings Account</option>
-                    <option value="Credit Card">Credit Card</option>
-                    <option value="Receipt">Receipt Ledger</option>
-                    <option value="Paystub">Paystub Ledger</option>
+                    <option value="Bank Statement">Bank Statement</option>
+                    <option value="Credit Card Statement">Credit Card Statement</option>
+                    <option value="Paystub">Paystub</option>
+                    <option value="Tax Document">Tax Document</option>
+                    <option value="Court Filing">Court Filing</option>
+                    <option value="Legal Order">Legal Order</option>
+                    <option value="Receipt">Receipt</option>
+                    <option value="Other">Other</option>
                   </select>
                 </div>
 
@@ -1122,8 +1143,8 @@ export default function DocumentsView({
       <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div>
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Ingested Statements Ledger Vault</h4>
-            <p className="text-[10px] text-slate-500 mt-0.5">Documents are indexed locally so you can link source documents to accounts and transactions.</p>
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Uploaded Documents</h4>
+            <p className="text-[10px] text-slate-500 mt-0.5">Documents loaded in raw memory custody are managed by digital hashes in the workspace sandbox.</p>
           </div>
 
           <div className="relative w-full sm:w-64">
@@ -1163,10 +1184,14 @@ export default function DocumentsView({
                 return (
                   <tr key={doc.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-3">
-                      <div className="flex items-start gap-2.5">
-                        <FileText className="h-5 w-5 text-slate-400 mt-0.5 shrink-0" />
+                      <div 
+                        onClick={() => setSelectedDocForPreview(doc)}
+                        className="flex items-start gap-2.5 cursor-pointer group"
+                        title="Click to view layout preview and edit metadata"
+                      >
+                        <FileText className="h-5 w-5 text-indigo-500 mt-0.5 shrink-0 group-hover:scale-110 transition-transform" />
                         <div className="min-w-0">
-                          <p className="font-semibold text-slate-900 font-mono truncate">{doc.filename}</p>
+                          <p className="font-semibold text-slate-900 font-mono truncate group-hover:text-indigo-650 group-hover:underline">{doc.filename}</p>
                           <span className="text-[9px] text-slate-400 block mt-0.5 font-mono">
                             ID: {doc.id} · Ingested {new Date(doc.upload_timestamp).toLocaleDateString()}
                           </span>
@@ -1236,13 +1261,26 @@ export default function DocumentsView({
                       )}
                     </td>
                     <td className="p-3 text-right">
-                      <button 
-                        onClick={() => onDeleteDocument(doc.id)}
-                        className="text-slate-455 hover:text-red-650 transition-colors p-1"
-                        title="Delete statement from ledger memory"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => setSelectedDocForPreview(doc)}
+                          className="bg-indigo-55 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded px-2 py-1 text-[10px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 select-none"
+                          title="Open sliding forensic panel & metadata editor"
+                        >
+                          👁️ View / Edit
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (confirm("Are you sure you want to permanently delete this document and remove it from ledger memory?")) {
+                              onDeleteDocument(doc.id);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-red-650 transition-colors p-1 bg-slate-50 hover:bg-rose-50 border border-slate-150 rounded"
+                          title="Delete statement from ledger memory"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1258,6 +1296,255 @@ export default function DocumentsView({
           </table>
         </div>
       </div>
+
+      {/* Floating success banner notice */}
+      {successNotification && (
+        <div className="fixed top-4 right-4 bg-emerald-900 border border-emerald-500 text-emerald-100 text-xs font-bold font-sans py-3.5 px-5 rounded-xl shadow-xl z-[999999] flex items-center gap-2.5 animate-bounce">
+          <CheckCircle className="h-4.5 w-4.5 text-emerald-400 shrink-0" />
+          <span>{successNotification}</span>
+        </div>
+      )}
+
+      {/* Sliding preview panel / detail modal drawer */}
+      {selectedDocForPreview && (
+        <div className="fixed inset-0 bg-slate-950/40 backdrop-blur-xs flex justify-end z-[5000]" id="doc-preview-modal-drawer">
+          <div className="fixed inset-0" onClick={() => setSelectedDocForPreview(null)}></div>
+          <div className="bg-white w-full max-w-2xl h-full shadow-2xl relative z-[5001] flex flex-col justify-between overflow-hidden">
+            
+            {/* Header */}
+            <div className="bg-slate-900 text-white p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-emerald-400 shrink-0" />
+                <div>
+                  <h3 className="font-bold text-sm tracking-tight truncate max-w-md">{selectedDocForPreview.filename}</h3>
+                  <p className="text-[10px] text-slate-400 uppercase font-mono tracking-widest mt-0.5">
+                    ID: {selectedDocForPreview.id} · CLASSIFIED: {selectedDocForPreview.file_type}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedDocForPreview(null)}
+                className="text-slate-400 hover:text-white font-mono text-xs font-bold p-1 bg-slate-800 rounded px-2"
+                id="close-drawer-btn"
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+
+            {/* Content area: Split Layout Preview & Config */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-6 scrollbar-thin text-slate-800">
+              
+              {/* TIMESTAMPS & SOURCE METADATA */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Uploaded At</span>
+                  <span className="font-mono text-slate-800 font-bold">
+                    {selectedDocForPreview.upload_timestamp ? new Date(selectedDocForPreview.upload_timestamp).toLocaleDateString() : 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Institution Name</span>
+                  <span className="font-semibold text-slate-800">
+                    {selectedDocForPreview.institution_name || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Statement dates</span>
+                  <span className="font-mono text-slate-800 font-semibold">
+                    {selectedDocForPreview.statement_period || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">OCR Confidence</span>
+                  <span className="font-bold text-emerald-600 font-mono">
+                    {Math.round(selectedDocForPreview.ocr_confidence * 100)}% ({selectedDocForPreview.ocr_status})
+                  </span>
+                </div>
+              </div>
+
+              {/* ACTION: RENAME & RECLASSIFY & EDIT NOTES INLINE */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4 shadow-2xs">
+                <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5 flex items-center gap-1.5">
+                  ✏️ Edit Document Metadata
+                </h4>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Document Title (Filename)</label>
+                    <input 
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-mono font-bold text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                      value={selectedDocForPreview.filename}
+                      onChange={e => {
+                        const newName = e.target.value;
+                        if (onUpdateDocument) {
+                          onUpdateDocument(selectedDocForPreview.id, { filename: newName });
+                          setSelectedDocForPreview(prev => prev ? { ...prev, filename: newName } : null);
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Classification Type</label>
+                    <select
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-semibold text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                      value={selectedDocForPreview.file_type}
+                      onChange={e => {
+                        const newType = e.target.value as any;
+                        if (onUpdateDocument) {
+                          onUpdateDocument(selectedDocForPreview.id, { file_type: newType });
+                          setSelectedDocForPreview(prev => prev ? { ...prev, file_type: newType } : null);
+                        }
+                      }}
+                    >
+                      <option value="Bank Statement">Bank Statement</option>
+                      <option value="Credit Card Statement">Credit Card Statement</option>
+                      <option value="Paystub">Paystub</option>
+                      <option value="Tax Document">Tax Document</option>
+                      <option value="Court Filing">Court Filing</option>
+                      <option value="Legal Order">Legal Order</option>
+                      <option value="Receipt">Receipt</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Account Association Metadata (Optional)</label>
+                  <select
+                    className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-semibold text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                    value={selectedDocForPreview.account_id || ''}
+                    onChange={e => {
+                      const accId = e.target.value;
+                      onLinkAccount(selectedDocForPreview.id, accId);
+                      setSelectedDocForPreview(prev => prev ? { ...prev, account_id: accId || undefined } : null);
+                    }}
+                  >
+                    <option value="">-- No Linked Account (Unassociated Metadata) --</option>
+                    {accounts.map(acc => (
+                      <option key={acc.id} value={acc.id}>
+                        {acc.account_name} (*{acc.account_suffix})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Internal Audit Notes & Commentary</label>
+                  <textarea 
+                    rows={2}
+                    className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden font-sans"
+                    placeholder="Add forensic notes regarding custody expenses, child support records, or account transfers..."
+                    value={selectedDocForPreview.user_notes || ''}
+                    onChange={e => {
+                      const notes = e.target.value;
+                      if (onUpdateDocument) {
+                        onUpdateDocument(selectedDocForPreview.id, { user_notes: notes });
+                        setSelectedDocForPreview(prev => prev ? { ...prev, user_notes: notes } : null);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* DOCUMENT LAYOUT PREVIEW PANEL */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 text-white">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <h4 className="text-[10.5px] font-bold uppercase text-emerald-450 font-mono tracking-wider">
+                    📄 Structured Layout Preview
+                  </h4>
+                  <span className="text-[9px] font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 uppercase">
+                    Sandbox Mock Viewport
+                  </span>
+                </div>
+                
+                {/* Visual rendering of a mock PDF/CSV document */}
+                <div className="bg-slate-950 rounded-lg p-5 border border-slate-850 font-mono text-[10px] text-slate-405 space-y-3 select-text max-h-[160px] overflow-y-auto">
+                  <p className="text-white font-bold text-center border-b border-slate-900 pb-1 uppercase text-xs">
+                    {selectedDocForPreview.institution_name || 'Generic Bank Corp'}
+                  </p>
+                  <p className="flex justify-between text-[9px] text-slate-500">
+                    <span>RECORD DATE: {selectedDocForPreview.statement_period || 'N/A'}</span>
+                    <span>AUDIT ID: #{selectedDocForPreview.id}</span>
+                  </p>
+                  <hr className="border-slate-900" />
+                  <div className="text-slate-300 leading-relaxed text-[10px] space-y-1">
+                    [OCR ANALYSIS TEXT SEGMENT]
+                    <br />
+                    This is the extracted information layer parsed from the binary image.
+                    <br />
+                    File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
+                    <br />
+                    Confidence Interval: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
+                    <br />
+                    Audit status certifies this segment as <strong className="text-emerald-455">{selectedDocForPreview.ocr_status === 'Success' ? 'SECURE' : 'NEEDS ATTENTION'}</strong>.
+                  </div>
+                </div>
+              </div>
+
+              {/* EXTRACTED INFORMATION ROW INDICES */}
+              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
+                <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5 flex items-center gap-1.5">
+                  🔍 Extracted Information Line-Items
+                </h4>
+                
+                <div className="text-xs space-y-2">
+                  {transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length > 0 ? (
+                    <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto pr-1">
+                      {transactions
+                        .filter(t => t.source_document_id === selectedDocForPreview.id)
+                        .map(tx => (
+                          <div key={tx.transaction_id} className="py-2 flex items-center justify-between text-[11px] font-mono">
+                            <div className="min-w-0 pr-2">
+                              <p className="font-bold text-slate-800 truncate">{tx.clean_vendor_name || tx.raw_description}</p>
+                              <p className="text-[9px] text-slate-500 mt-0.5">
+                                {tx.transaction_date} · {tx.category} {tx.notes ? `· Notes: ${tx.notes}` : ''}
+                              </p>
+                            </div>
+                            <span className={`font-bold font-mono text-right shrink-0 ${
+                              tx.amount < 0 ? 'text-rose-600' : 'text-emerald-600'
+                            }`}>
+                              {tx.amount < 0 ? '-' : '+'}${Math.abs(tx.amount).toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  ) : (
+                    <div className="p-6 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg">
+                      No extracted ledger transactions are currently bound to this document. Use the CSV/PDF parsing widgets above to load ledger lines.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer and Delete Actions */}
+            <div className="bg-slate-50 border-t p-4 flex items-center justify-between">
+              <button 
+                onClick={() => {
+                  if (confirm("Are you sure you want to permanently delete this document and remove it from ledger memory?")) {
+                    onDeleteDocument(selectedDocForPreview.id);
+                    setSelectedDocForPreview(null);
+                  }
+                }}
+                className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-mono text-xs font-bold py-2 px-4 rounded-lg border border-rose-200 transition-colors inline-flex items-center gap-1 cursor-pointer"
+              >
+                🗑️ DELETE FILE
+              </button>
+              
+              <button 
+                onClick={() => setSelectedDocForPreview(null)}
+                className="bg-slate-900 hover:bg-slate-850 text-white font-mono text-xs font-bold py-2 px-5 rounded-lg transition-colors cursor-pointer"
+              >
+                ✓ DECLASSIFY & KEEP
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

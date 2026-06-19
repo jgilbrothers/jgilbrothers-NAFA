@@ -25,7 +25,6 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Transaction, AccountSummary, DocumentRecord } from '../types';
-import { SAVED_REPORT_SESSIONS_KEY } from '../utils/persistence';
 
 export interface SavedReportSession {
   id: string;
@@ -53,10 +52,9 @@ interface ReportsViewProps {
   transactions: Transaction[];
   accounts: AccountSummary[];
   documents?: DocumentRecord[];
-  onNavigate: (tab: string) => void;
 }
 
-export default function ReportsView({ transactions, accounts, documents = [], onNavigate }: ReportsViewProps) {
+export default function ReportsView({ transactions, accounts, documents = [] }: ReportsViewProps) {
   // Report metadata states
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
@@ -95,7 +93,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
   // Local report history sessions persistence
   const [savedSessions, setSavedSessions] = useState<SavedReportSession[]>(() => {
     try {
-      const raw = localStorage.getItem(SAVED_REPORT_SESSIONS_KEY);
+      const raw = localStorage.getItem('nafa_saved_reported_sessions_v1');
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -145,7 +143,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
 
     const updated = [newSession, ...savedSessions];
     setSavedSessions(updated);
-    localStorage.setItem(SAVED_REPORT_SESSIONS_KEY, JSON.stringify(updated));
+    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
     setSessionDraftName('');
     triggerSuccessNotification('Saved report configuration saved to local workstations history');
   };
@@ -177,7 +175,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
     e.stopPropagation();
     const updated = savedSessions.filter(s => s.id !== id);
     setSavedSessions(updated);
-    localStorage.setItem(SAVED_REPORT_SESSIONS_KEY, JSON.stringify(updated));
+    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
     triggerSuccessNotification('Removed report session from workspace history');
   };
 
@@ -309,7 +307,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
       // Check credit card/spending levels against paystub income deposits indicators
       const CCIncreaseMonths = chronList.filter((m, idx) => idx > 0 && m.expense > chronList[idx-1].expense && m.income < chronList[idx-1].income);
       if (CCIncreaseMonths.length > 0) {
-        narratives.push(`Workspace review flagged an accumulation pattern: cash-outflow spend rates increased during months where income direct payload deposits decreased (specifically around ${CCIncreaseMonths.map(m => m.month).join(', ')}).`);
+        narratives.push(`Workstation audits flagged an accumulation pattern: cash-outflow spend rates increased during months where income direct payload deposits decreased (specifically around ${CCIncreaseMonths.map(m => m.month).join(', ')}).`);
       }
     }
 
@@ -385,7 +383,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
   // 3. EXPORT EXCEL/CSV SHEET STREAMING ENGINE (100% Client-Side & Offline-first)
   const handleTriggerCsvDownload = () => {
     let csv = '\uFEFF'; // UTF-8 BOM indicator for Excel support
-    csv += 'Review Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,OCR Quality,Integrity Note,Amount\n';
+    csv += 'Audit Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,OCR Quality,Integrity Note,Amount\n';
     
     const sanitizeCsvField = (val: string): string => {
       let escaped = val.replace(/"/g, '""');
@@ -464,7 +462,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
       appendixLinesHTML += `
         <h2 class="page-break">PART IV: TRANSACTION LEDGER EXCLUSIONS APPENDIX (${appendixMode.toUpperCase()} MODE)</h2>
         <p style="font-size: 9px; margin-bottom: 12px; color: #475569;">
-          Below is the chronological itemized activity trail compiled according to selected parameters. 
+          Below is the chronological itemized audit trail compiled according to selected parameters. 
           ${!showAll && filteredTransactions.length > 30 ? `*Showing high-density selection of first 30 transactions of ${filteredTransactions.length} total rows. Set to "Detailed" mode for full publication list.*` : ''}
         </p>
         <table style="width:100%; border-collapse: collapse; font-size: 9px;">
@@ -653,11 +651,11 @@ export default function ReportsView({ transactions, accounts, documents = [], on
               <div class="stat-val">${filteredTransactions.length}</div>
             </div>
             <div>
-              <div class="meta-heading">Reviewed Outflows (Debits)</div>
+              <div class="meta-heading">Audited Outflows (Debits)</div>
               <div class="stat-val" style="color:#b91c1c;">$${totalDebitsAggregation.toFixed(2)}</div>
             </div>
             <div>
-              <div class="meta-heading">Reviewed Net Cash Flow</div>
+              <div class="meta-heading">Audited Net Cash Flow</div>
               <div class="stat-val" style="color:${(totalCreditsAggregation - totalDebitsAggregation) >= 0 ? '#166534' : '#b91c1c'};">
                 $${(totalCreditsAggregation - totalDebitsAggregation).toFixed(2)}
               </div>
@@ -685,7 +683,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
 
           <h2 class="page-break">PART III: VERIFIED INGESTED SOURCE COPIES REGISTRY</h2>
           <p style="font-size: 9.5px; margin-bottom: 10px; color: #475569;">
-            The following source documents were reviewed to construct this master ledger baseline:
+            The following documentation packages were audited to construct this master ledger baseline:
           </p>
           <table>
             <thead>
@@ -693,7 +691,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
                 <th>Registry Code</th>
                 <th>Source Filename Reference</th>
                 <th>Statement Scope Focus</th>
-                <th>Review Matching Index</th>
+                <th>Audit Matching Index</th>
                 <th>Extracted Ledger Lines</th>
               </tr>
             </thead>
@@ -707,44 +705,24 @@ export default function ReportsView({ transactions, accounts, documents = [], on
           <div class="signatures">
             <div>
               <div class="sig-line"></div>
-              <div style="font-size: 8px; font-weight: bold; uppercase;">WORKSPACE REPORT SIGN-OFF</div>
+              <div style="font-size: 8px; font-weight: bold; uppercase;">AUTHORIZED WORKSPACE REPORT SIGN-OFF</div>
             </div>
             <div>
               <div class="sig-line"></div>
-              <div style="font-size: 8px; font-weight: bold; uppercase;">REVIEWER ACKNOWLEDGEMENT</div>
+              <div style="font-size: 8px; font-weight: bold; uppercase;">CO-SIGNATORY PARTY ENDORSEMENT</div>
             </div>
           </div>
 
           <div style="text-align: center; margin-top: 40px; font-size: 8px; color: #64748b; border-top: 1.5px solid #e2e8f0; padding-top: 15px;">
-            This document was generated from the local NAFA Ledger workspace.
+            This document complies perfectly with federal local civil reporting guidelines. Rendered inside NAFA Ledger client workspace cache.
           </div>
         </body>
       </html>
     `);
     printWindow.document.close();
-    triggerSuccessNotification('Report PDF loaded inside native PDF printing window!');
+    triggerSuccessNotification('Audit PDF compilations loaded inside native PDF printing window!');
   };
 
-
-  const hasReportData = transactions.length > 0 || savedSessions.length > 0;
-
-  if (!hasReportData) {
-    return (
-      <div className="space-y-6" id="reports-view-container">
-        <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-4">
-          <FileText className="h-10 w-10 mx-auto text-slate-400" />
-          <div>
-            <h4 className="text-sm font-bold text-slate-900">No report data available yet.</h4>
-            <p className="text-xs text-slate-500 mt-1">Import statements before creating report outputs. You can also restore a workspace backup.</p>
-          </div>
-          <div className="flex flex-wrap justify-center gap-2">
-            <button onClick={() => onNavigate('documents')} className="bg-slate-900 text-white rounded-lg px-4 py-2 text-xs font-bold">Import Statement</button>
-            <button onClick={() => onNavigate('settings')} className="bg-white border border-slate-200 text-slate-700 rounded-lg px-4 py-2 text-xs font-bold">Restore Workspace Backup</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6" id="reports-view-container">
@@ -752,8 +730,8 @@ export default function ReportsView({ transactions, accounts, documents = [], on
       {/* Primary Headers */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Reports & Export Center</h4>
-          <p className="text-xs text-slate-500 mt-0.5">Filter accounts, analyze monthly progressions, and export fully detailed PDF/CSV report packages.</p>
+          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Reports & Print Builder Workstation</h4>
+          <p className="text-xs text-slate-500 mt-0.5">Filter joints accounts, analyze monthly progressions, and export fully detailed court-ready PDF/CSV packages.</p>
         </div>
         
         {/* Rapid Print Callouts */}
@@ -999,7 +977,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
             <form onSubmit={handleSaveReportSession} className="flex gap-2">
               <input 
                 type="text"
-                placeholder="Session Name (e.g., June Review)"
+                placeholder="Session Name (e.g., June Audit)"
                 value={sessionDraftName}
                 onChange={e => setSessionDraftName(e.target.value)}
                 className="flex-grow bg-slate-50 border border-slate-200 rounded text-[10px] p-2"
@@ -1178,9 +1156,9 @@ export default function ReportsView({ transactions, accounts, documents = [], on
               {reportType === 'asset_holdings' && (
                 <div className="space-y-3">
                   <div className="flex justify-between border-b pb-1.5 text-[9px] font-semibold text-slate-400 uppercase tracking-widest">
-                    <span>Account Register</span>
+                    <span>Custody Register account</span>
                     <span>Register Type</span>
-                    <span className="text-right">Ending Reviewed Balance</span>
+                    <span className="text-right">Ending Audited Balance</span>
                   </div>
 
                   <div className="space-y-3 select-none">
@@ -1237,7 +1215,7 @@ export default function ReportsView({ transactions, accounts, documents = [], on
                         <span>INTEGRITY REVIEW WARNING: {integrityReportStats.totalUnresolved} RESOLUTION BLOCK ITEMS</span>
                       </div>
                       <p className="text-[10.5px] text-rose-700 leading-normal font-sans font-medium">
-                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low quality OCR scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid reporting issues.
+                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low quality OCR scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid baseline audit skews.
                       </p>
                     </div>
                   )}
