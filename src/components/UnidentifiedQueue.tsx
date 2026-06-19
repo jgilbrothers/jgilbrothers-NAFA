@@ -115,14 +115,13 @@ export default function NeedsReviewQueue({
 
                   <form onSubmit={handleClassifySubmit} className="space-y-3 text-xs text-slate-900">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Link folder account</label>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Optional Account Association</label>
                       <select
-                        required
                         value={accountId}
                         onChange={e => setAccountId(e.target.value)}
                         className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-900 font-bold focus:border-indigo-400 focus:outline-hidden"
                       >
-                        <option value="">-- Choose Account --</option>
+                        <option value="">-- No Associated Account --</option>
                         {accounts.map(acc => (
                           <option key={acc.id} value={acc.id}>
                             {acc.account_name} (*{acc.account_suffix})
@@ -138,11 +137,19 @@ export default function NeedsReviewQueue({
                         onChange={e => setClassificationType(e.target.value as any)}
                         className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-900 font-bold focus:border-indigo-400 focus:outline-hidden"
                       >
-                        <option value="Checking">Checking Statement</option>
-                        <option value="Savings">Savings Statement</option>
-                        <option value="Credit Card">Credit Card Statement</option>
-                        <option value="Paystub">Paystub Record</option>
-                        <option value="Receipt">Receipt Document</option>
+                        <option value="Checking Statement">Checking Statement</option>
+                        <option value="Savings Statement">Savings Statement</option>
+                        <option value="Credit Card Statement">Credit Card Statement</option>
+                        <option value="Paystub">Paystub</option>
+                        <option value="Receipt">Receipt</option>
+                        <option value="Tax Document">Tax Document</option>
+                        <option value="Court Document">Court Document</option>
+                        <option value="Legal Order">Legal Order</option>
+                        <option value="Loan Document">Loan Document</option>
+                        <option value="Utility Bill">Utility Bill</option>
+                        <option value="Insurance Document">Insurance Document</option>
+                        <option value="Other">Other</option>
+                        <option value="Unknown / Needs Review">Unknown / Needs Review</option>
                       </select>
                     </div>
 
@@ -158,7 +165,7 @@ export default function NeedsReviewQueue({
                 </div>
 
                 <div className="text-[10px] text-slate-450 italic leading-tight pt-2 border-t font-sans font-medium">
-                  Approval instantly incorporates all parsed rows into the main transaction ledger view.
+                  Classification updates this document record. Account association is optional metadata.
                 </div>
 
               </div>
@@ -171,7 +178,7 @@ export default function NeedsReviewQueue({
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400 select-none">
           <FolderSearch className="h-8 w-8 mx-auto mb-2 text-slate-350" />
           <p className="text-xs font-bold">Needs Review Documents Queue is completely clear</p>
-          <p className="text-[10px] text-slate-500 mt-1">Excellent! All uploaded statement documents are currently mapped to registered financial accounts.</p>
+          <p className="text-[10px] text-slate-500 mt-1">Excellent! All uploaded statement documents are currently classified or marked for review.</p>
         </div>
       )}
 

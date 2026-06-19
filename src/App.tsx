@@ -449,14 +449,14 @@ export default function App() {
     setDocuments(prev => prev.map(doc => doc.id === docId ? { 
       ...doc, 
       file_type: classificationType,
-      account_id: accountId,
+      account_id: accountId || undefined,
       processing_status: 'Completed'
     } : doc));
 
     // 2. Add an audit log
     const doc = documents.find(d => d.id === docId);
     const acc = accounts.find(a => a.id === accountId);
-    appendAuditLog('RESOLVE_UNIDENTIFIED', `Manually matched document ${doc?.filename || docId} target to account ending *${acc?.account_suffix}`, 'info');
+    appendAuditLog('RESOLVE_UNIDENTIFIED', accountId ? `Classified document ${doc?.filename || docId} and associated it with account ending *${acc?.account_suffix}` : `Classified document ${doc?.filename || docId} without an associated account`, 'info');
   };
 
   // Handlers: Corrections queue resolutions

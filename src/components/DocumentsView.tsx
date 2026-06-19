@@ -490,21 +490,27 @@ export default function DocumentsView({
   const simulateFileUpload = (name: string) => {
     setIsUploading(true);
     setTimeout(() => {
+      const detectedType = detectDocumentType(name);
+      const needsManualClassification = detectedType === 'Unknown / Needs Review';
       onAddDocument({
         id: `DOC-NEW-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
         filename: name,
         upload_timestamp: new Date().toISOString(),
-        file_type: detectDocumentType(name),
+        file_type: detectedType,
         ocr_status: 'Low Confidence',
-        ocr_confidence: 0.5,
-        institution_name: 'Needs Review',
+        ocr_confidence: needsManualClassification ? 0.5 : 0.75,
+        institution_name: needsManualClassification ? 'Needs Review' : 'Detected',
         statement_period: '',
-        processing_status: 'Requires Classification',
-        user_notes: 'Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.'
+        processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
+        user_notes: needsManualClassification
+          ? 'Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.'
+          : 'Document type detected. Please verify details and optionally associate an account.'
       });
       setIsUploading(false);
       
-      setSuccessNotification(`Document '${name}' uploaded. Detected: needs review. Open details to add or correct information.`);
+      setSuccessNotification(needsManualClassification
+        ? `Document '${name}' uploaded. Detection needs review; open details to classify it.`
+        : `Document '${name}' uploaded. Detected ${detectedType}; please verify details.`);
       setTimeout(() => setSuccessNotification(null), 3500);
     }, 1200);
   };
@@ -1486,7 +1492,7 @@ export default function DocumentsView({
                     <br />
                     Read Quality: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
                     <br />
-                    Read status: <strong className="text-emerald-455">{selectedDocForPreview.ocr_status === 'Success' ? 'Read' : 'Needs Review'}</strong>.
+                    Read status: <strong className="text-emerald-500">{selectedDocForPreview.ocr_status === 'Success' ? 'Read' : 'Needs Review'}</strong>.
                   </div>
                 </div>
               </div>
