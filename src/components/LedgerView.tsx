@@ -171,7 +171,7 @@ export default function LedgerView({
           )}
         </div>
 
-        {/* Filter Custody Account */}
+        {/* Filter Account */}
         <div>
           <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Filter Account Suffix</label>
           <select

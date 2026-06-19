@@ -383,7 +383,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
   // 3. EXPORT EXCEL/CSV SHEET STREAMING ENGINE (100% Client-Side & Offline-first)
   const handleTriggerCsvDownload = () => {
     let csv = '\uFEFF'; // UTF-8 BOM indicator for Excel support
-    csv += 'Audit Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,OCR Quality,Integrity Note,Amount\n';
+    csv += 'Audit Row ID,Date,Merchant Name,Category,Associated Account,Transaction Type,Clear Method,Read Quality,Integrity Note,Amount\n';
     
     const sanitizeCsvField = (val: string): string => {
       let escaped = val.replace(/"/g, '""');
@@ -665,7 +665,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
           ${integrityReportStats.totalUnresolved > 0 ? `
             <div class="warning-msg">
               <strong>⚠️ REPORT INTEGRITY ADVISORY:</strong> 
-              This compiled index contains <strong>${integrityReportStats.totalUnresolved} items needing verification/resolution</strong> (${integrityReportStats.lowConfidenceCount} low OCR elements, ${integrityReportStats.possibleDuplicatesCount} possible double entries). 
+              This compiled index contains <strong>${integrityReportStats.totalUnresolved} items needing verification/resolution</strong> (${integrityReportStats.lowConfidenceCount} low read-quality items, ${integrityReportStats.possibleDuplicatesCount} possible double entries). 
               The joint baseline metrics are susceptible to mathematical skews until elements are resolved inside review buffers.
             </div>
           ` : ''}
@@ -1215,7 +1215,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
                         <span>INTEGRITY REVIEW WARNING: {integrityReportStats.totalUnresolved} RESOLUTION BLOCK ITEMS</span>
                       </div>
                       <p className="text-[10.5px] text-rose-700 leading-normal font-sans font-medium">
-                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low quality OCR scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid baseline audit skews.
+                        The current parameters contain <strong>{integrityReportStats.lowConfidenceCount} low read-quality scans</strong> and <strong>{integrityReportStats.possibleDuplicatesCount} overlap double counts</strong>. Check items within review dashboards to avoid baseline audit skews.
                       </p>
                     </div>
                   )}

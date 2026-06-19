@@ -17,6 +17,7 @@ import {
 
 interface SettingsViewProps {
   onResetDatabase: () => void;
+  onLoadSampleDemoData: () => void;
   jurisdiction: string;
   onChangeJurisdiction: (j: string) => void;
   onExportBackup: () => void;
@@ -24,7 +25,8 @@ interface SettingsViewProps {
 }
 
 export default function SettingsView({ 
-  onResetDatabase, 
+  onResetDatabase,
+  onLoadSampleDemoData, 
   jurisdiction, 
   onChangeJurisdiction,
   onExportBackup,
@@ -48,7 +50,7 @@ export default function SettingsView({
   };
 
   const handleFullReset = () => {
-    if (confirm('Are you absolutely sure you want to reset and re-seed the sample data? This will overwrite your current workspace variables.')) {
+    if (confirm('Reset Workspace clears your local NAFA Ledger workspace data. Export a backup first if you want to preserve it.')) {
       onResetDatabase();
       setShowSeedMsg(true);
       setTimeout(() => {
@@ -124,7 +126,7 @@ export default function SettingsView({
 
       {showSeedMsg && (
         <div className="bg-indigo-50 text-indigo-800 border border-indigo-200 text-xs p-3.5 rounded-xl flex items-center gap-2 select-none">
-          <RotateCcw className="h-4 w-4 text-indigo-600" /> Database re-seeded! Mapped 4 registered accounts, 5 PDF statement documents, keywords rules, and ledger raw logs.
+          <RotateCcw className="h-4 w-4 text-indigo-600" /> Workspace reset. Local accounts, documents, transactions, rules, review items, logs, and chat have been cleared.
         </div>
       )}
 
@@ -307,10 +309,29 @@ export default function SettingsView({
                   onClick={handleFullReset}
                   className="w-full bg-red-800 hover:bg-red-700 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" /> Re-seed Sample Ledger Data
+                  <RotateCcw className="h-3.5 w-3.5" /> Reset Workspace
                 </button>
                 <span className="text-[9px] text-slate-400 block mt-1.5 text-center font-sans font-medium">
-                  Clears overrides and resets database to match default seeded statements.
+                  Clears only NAFA Ledger workspace data stored by this app.
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm('This will replace your current workspace data with sample demo data. Export a backup first if you want to preserve your current workspace.')) {
+                      onLoadSampleDemoData();
+                      setShowSeedMsg(true);
+                      setTimeout(() => setShowSeedMsg(false), 2500);
+                    }
+                  }}
+                  className="w-full bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> Load Sample Demo Data
+                </button>
+                <span className="text-[9px] text-slate-400 block mt-1.5 text-center font-sans font-medium">
+                  Optional testing data; never loads automatically.
                 </span>
               </div>
             </div>

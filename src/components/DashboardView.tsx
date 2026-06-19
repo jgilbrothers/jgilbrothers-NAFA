@@ -22,12 +22,13 @@ import {
   PieChart, 
   Pie 
 } from 'recharts';
-import { AccountSummary, Transaction } from '../types';
+import { AccountSummary, Transaction, DocumentRecord } from '../types';
 import { FinancialAggregates } from '../utils/dataEngine';
 
 interface DashboardViewProps {
   accounts: AccountSummary[];
   transactions: Transaction[];
+  documents: DocumentRecord[];
   aggregates: FinancialAggregates;
   onNavigate: (tab: string) => void;
   unresolvedReviewCount: number;
@@ -37,7 +38,8 @@ const COLORS = ['#1e293b', '#475569', '#64748b', '#94a3b8', '#cbd5e1', '#0f766e'
 
 export default function DashboardView({ 
   accounts, 
-  transactions, 
+  transactions,
+  documents, 
   aggregates, 
   onNavigate,
   unresolvedReviewCount
@@ -76,8 +78,19 @@ export default function DashboardView({
           onClick={() => onNavigate('documents')}
           className="bg-emerald-600 hover:bg-emerald-500 text-[11px] font-bold uppercase py-1.5 px-3 rounded text-white flex items-center gap-1.5 transition-all self-start md:self-auto cursor-pointer"
         >
-          <Play className="h-3 w-3 fill-current" /> Add Statements
+          <Play className="h-3 w-3 fill-current" /> Upload Document
         </button>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
+        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Quick Actions</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {[['Upload Document', 'documents'], ['View Documents', 'documents'], ['Analyze Documents', 'ai-chat'], ['Create Report', 'reports']].map(([label, tab]) => (
+            <button key={label} onClick={() => onNavigate(tab)} className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold uppercase rounded-lg py-2 px-3">{label}</button>
+          ))}
+        </div>
+        {documents.length === 0 && <p className="text-xs text-slate-500 mt-3">No documents uploaded yet.</p>}
+        {documents.length > 0 && transactions.length === 0 && <p className="text-xs text-amber-700 mt-3">Documents uploaded. Extract or import transactions to generate financial charts.</p>}
       </div>
 
       {/* Analytical KPI Summary Cards */}
@@ -152,7 +165,7 @@ export default function DashboardView({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-500 mt-1">OCR errors, duplicates, transfer links</p>
+            <p className="text-[10px] text-slate-500 mt-1">Read quality issues, duplicates, transfer links</p>
           </div>
           <div className="pt-3 border-t border-slate-200 mt-3">
             <button onClick={() => onNavigate('review-queue')} className="text-amber-800 text-[10px] font-bold uppercase hover:underline text-left">
@@ -172,7 +185,7 @@ export default function DashboardView({
           <div className="bg-white border border-slate-200 rounded-xl shadow-xs p-5">
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-4 flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-slate-900" />
-              Ingested Cash Balance Flow vs Debt Spending
+              Cash Flow From Imported Transactions
             </h4>
             <div className="h-64 font-mono text-[10px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -201,7 +214,7 @@ export default function DashboardView({
             </div>
 
             <div className="space-y-2">
-              {transactions.slice(0, 5).map((tx, idx) => (
+              {transactions.length === 0 ? (<div className="text-slate-400 text-xs italic p-4">No transactions yet.</div>) : transactions.slice(0, 5).map((tx, idx) => (
                 <div key={tx.transaction_id || idx} className="flex items-center justify-between p-2.5 hover:bg-slate-50 rounded-lg transition-colors border border-slate-50 text-xs">
                   <div className="min-w-0 flex-1 pr-4">
                     <div className="flex items-center gap-2 flex-wrap">

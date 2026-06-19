@@ -1,6 +1,6 @@
 {
-  "name": "JAI Site Engineer — Forensic Document Vault",
-  "description": "Secure, document-centric forensic intelligence parsing workstation. Vault files, OCR analysis, duplicate audits, and budget average handshakes designed for Cloudflare Pages serverless environments.",
+  "name": "NAFA Ledger",
+  "description": "Offline-first financial analysis and document intelligence workspace for Cloudflare Pages static deployment.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -36,14 +36,14 @@ export default function ReviewCorrectionsQueue({
       {/* Description headings */}
       <div>
         <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Needs Review & Corrections Vault</h4>
-        <p className="text-xs text-slate-500 mt-0.5">Examine ledger discrepancy logs, approve low OCR reads, suppress statement duplicate errors, and verify bilateral transfers.</p>
+        <p className="text-xs text-slate-500 mt-0.5">Examine ledger discrepancy logs, approve low read-quality rows, suppress statement duplicate errors, and verify bilateral transfers.</p>
       </div>
 
       {reconciliationItems.filter(r => r.status === 'Unresolved').length === 0 ? (
         <div className="bg-white border border-slate-200 rounded-xl p-12 text-center text-slate-400 select-none space-y-2">
           <CopyCheck className="h-8 w-8 text-emerald-500 mx-auto" />
           <p className="text-xs font-bold text-slate-900">Needs Review list is completely pristine!</p>
-          <p className="text-[10px] text-slate-500">Every OCR warning, duplicate transaction overlay, and transfer loop has been fully certified and closed.</p>
+          <p className="text-[10px] text-slate-500">Every read-quality warning, duplicate transaction overlay, and transfer loop has been fully certified and closed.</p>
         </div>
       ) : (
         <div className="space-y-6">
@@ -54,7 +54,7 @@ export default function ReviewCorrectionsQueue({
               <div className="p-4 bg-amber-50/40 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4.5 w-4.5 text-amber-500 animate-pulse" />
-                  <h5 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Low OCR Read Confidence Row verifications ({ocrItems.length})</h5>
+                  <h5 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Low Read Quality Row Verifications ({ocrItems.length})</h5>
                 </div>
                 <span className="text-[9px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Action Required</span>
               </div>

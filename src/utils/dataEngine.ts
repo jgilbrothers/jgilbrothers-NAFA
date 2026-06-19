@@ -73,13 +73,13 @@ export function detectReconciliationQueues(
 ): ReconciliationItem[] {
   const items: ReconciliationItem[] = [];
 
-  // A. Low OCR Confidence scans
+  // A. Low Read Quality scans
   transactions.forEach(tx => {
     if (tx.confidence_score && tx.confidence_score < 0.85) {
       items.push({
         id: `REC-OCR-${tx.transaction_id}`,
         type: 'Low_Confidence',
-        title: 'Low OCR Read Confidence',
+        title: 'Low Read Quality',
         description: `Visual extraction reads "${tx.clean_vendor_name}" transaction at ${Math.round(tx.confidence_score * 100)}% accuracy. Verify amounts manually.`,
         severity: 'medium',
         transactionA: tx,

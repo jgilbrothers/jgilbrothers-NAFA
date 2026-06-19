@@ -74,7 +74,7 @@ export const INITIAL_DOCUMENTS: DocumentRecord[] = [
     id: 'DOC-101',
     filename: 'MetroChecking_May2026_Statement.pdf',
     upload_timestamp: '2026-06-01T10:14:22Z',
-    file_type: 'Bank Statement',
+    file_type: 'Checking Statement',
     ocr_status: 'Success',
     ocr_confidence: 0.96,
     account_id: 'ACC-001',
@@ -88,7 +88,7 @@ export const INITIAL_DOCUMENTS: DocumentRecord[] = [
     id: 'DOC-102',
     filename: 'SavingsLedger_May2026.xlsx',
     upload_timestamp: '2026-06-01T11:05:10Z',
-    file_type: 'Bank Statement',
+    file_type: 'Checking Statement',
     ocr_status: 'Success',
     ocr_confidence: 0.98,
     account_id: 'ACC-002',
@@ -120,7 +120,7 @@ export const INITIAL_DOCUMENTS: DocumentRecord[] = [
     ocr_status: 'Low Confidence',
     ocr_confidence: 0.72,
     institution_name: 'Target Store #2243',
-    user_notes: 'Crumpled paper receipt, OCR misaligned some line item characters',
+    user_notes: 'Crumpled paper receipt, text reading misaligned some line item characters',
     processing_status: 'Requires Verification',
     raw_text: `TARGET STORE #2243\n05/14/2026 18:24\nORGANIC VEGETABLES: $24.50\nKIDS DIAPERS PACK: $45.00 [Confidence 54%]\nBABY FORMULA CAN: $35.00\nTOTAL RETAL: $104.50\nPAID DEBT *4321: $104.50`
   },
@@ -136,12 +136,12 @@ export const INITIAL_DOCUMENTS: DocumentRecord[] = [
     processing_status: 'Completed',
     raw_text: `STATE HEALTH DEPT PAYSLIP\nPay Date: 05/15/2026\nJane S. Doe / Employee #89422\nRegular Gross: $6,000.00\nFederal Tax: -$820.00\nState Tax: -$320.00\nPension EE: -$300.00\nNet Paid to Metro Checking *4321: $4,320.00\nExtra routed deposit to Reserve Holdings *1402: $260.00`
   },
-  // Unidentified files to simulate the unclassified workflow
+  // Needs Review files to simulate the unclassified workflow
   {
     id: 'DOC-201',
     filename: 'Unknown_Scanned_Img_92.png',
     upload_timestamp: '2026-06-03T16:44:00Z',
-    file_type: 'Unidentified',
+    file_type: 'Unknown / Needs Review',
     ocr_status: 'Low Confidence',
     ocr_confidence: 0.45,
     institution_name: 'Landscape Maintenance Inc',
@@ -153,7 +153,7 @@ export const INITIAL_DOCUMENTS: DocumentRecord[] = [
     id: 'DOC-202',
     filename: 'Check_Deposit_Voucher_Void.pdf',
     upload_timestamp: '2026-06-04T11:12:00Z',
-    file_type: 'Unidentified',
+    file_type: 'Unknown / Needs Review',
     ocr_status: 'Low Confidence',
     ocr_confidence: 0.38,
     institution_name: 'Void Account Deposit',
@@ -562,9 +562,9 @@ export const INITIAL_AUDIT_LOGS: AuditLog[] = [
     id: 'AL-005',
     timestamp: '2026-06-05T11:42:15Z',
     action: 'LOW_CONFIDENCE_WARNING',
-    details: 'OCR warning alert triggered on "Scanned_Receipt_Target.jpg": Average optical read score is 72%. Flagged diaper row for manual verification.',
+    details: 'read-quality warning alert triggered on "Scanned_Receipt_Target.jpg": Average optical read score is 72%. Flagged diaper row for manual verification.',
     level: 'warning',
-    operator: 'System OCR Processor'
+    operator: 'System Document Reader'
   }
 ];
 
