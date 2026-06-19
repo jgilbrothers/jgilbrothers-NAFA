@@ -37,7 +37,7 @@ export interface DocumentRecord {
   id: string;
   filename: string;
   upload_timestamp: string;
-  file_type: 'Bank Statement' | 'Credit Card Statement' | 'Paystub' | 'Tax Document' | 'Court Filing' | 'Legal Order' | 'Receipt' | 'Other' | 'Unidentified';
+  file_type: 'Checking Statement' | 'Savings Statement' | 'Credit Card Statement' | 'Paystub' | 'Receipt' | 'Tax Document' | 'Court Document' | 'Legal Order' | 'Loan Document' | 'Utility Bill' | 'Insurance Document' | 'Other' | 'Unknown / Needs Review';
   ocr_status: 'Pending' | 'Success' | 'Low Confidence' | 'Failed';
   ocr_confidence: number; // 0.0 - 1.0
   account_id?: string;
@@ -46,6 +46,9 @@ export interface DocumentRecord {
   user_notes?: string;
   processing_status: 'Completed' | 'Requires Classification' | 'Requires Verification' | 'Processing';
   raw_text?: string;
+  extracted_amount?: number;
+  extracted_date?: string;
+  extracted_merchant?: string;
 }
 
 export interface LinkedVerificationPayload {
@@ -94,7 +97,7 @@ export interface Transaction {
   running_balance?: number;
   notes?: string;
   source_document_id?: string;
-  confidence_score?: number; // OCR Optical quality confidence
+  confidence_score?: number; // Document read quality confidence
   classification_ruleset_version?: string; // e.g. "neutral-v1" or "NC-family-v1"
   splits?: TransactionSplit[];
   manual_override?: boolean;

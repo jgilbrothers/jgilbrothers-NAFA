@@ -3,6 +3,16 @@ import { ReconciliationItem } from './dataEngine';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
 
+export interface LocalWorkspaceProfile {
+  userDisplayName: string;
+  workspaceName: string;
+  caseProjectName?: string;
+  jurisdiction: string;
+  createdAt: string;
+  lastOpenedAt: string;
+  appVersion: string;
+}
+
 export interface WorkspaceState {
   accounts: AccountSummary[];
   documents: DocumentRecord[];
@@ -12,6 +22,7 @@ export interface WorkspaceState {
   auditLogs: AuditLog[];
   chatLog: ChatMessage[];
   jurisdiction: string;
+  profile?: LocalWorkspaceProfile;
 }
 
 /**
@@ -42,10 +53,23 @@ export function loadWorkspace(): WorkspaceState | null {
       Array.isArray(parsed.transactions) &&
       Array.isArray(parsed.rules)
     ) {
+      const now = new Date().toISOString();
+      if (!parsed.profile) {
+        parsed.profile = {
+          userDisplayName: 'Local User',
+          workspaceName: 'Migrated NAFA Ledger Workspace',
+          jurisdiction: parsed.jurisdiction || 'North Carolina',
+          createdAt: now,
+          lastOpenedAt: now,
+          appVersion: (import.meta as any).env?.VITE_APP_VERSION || '1.0.0-OTA',
+        };
+      } else {
+        parsed.profile.lastOpenedAt = now;
+      }
       return parsed as WorkspaceState;
     }
   } catch (err) {
-    console.warn('Stale workspace mapping detected during restore sequence, defaulting to initial seeds:', err);
+    console.warn('Stale workspace mapping detected during restore sequence, starting with an empty workspace:', err);
   }
   return null;
 }

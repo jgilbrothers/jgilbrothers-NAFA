@@ -352,7 +352,7 @@ export function generateNarrativeFromSummary(summary: Partial<AnalysisSummary> &
         txt += `- **${row.item}**: amount **$${row.amount.toFixed(2)}** (*${row.note}*)\n`;
       });
     }
-    txt += `\nAction recommended: mark duplicates in the Review Queue to exclude them from the joint baseline calculations.`;
+    txt += `\nAction recommended: mark duplicates in the Needs Review to exclude them from the joint baseline calculations.`;
 
   } else if (label.includes('Transfer')) {
     txt += `I scanned bilateral routes and verified **${count} matched money transfers** totaling **$${total.toFixed(2)}**.\n\n`;
@@ -399,7 +399,7 @@ export async function optionalGeminiNarrative(
 ${contextSummary}
 
 Please interpret and write an objective, rigorous explanatory narrative for the user's query: "${query}".
-Do NOT perform your own raw math or alter any of the calculated totals. Stick strictly to the facts provided. Use neutral, professional tone. Avoid dramatic forensic or legal terminology.`,
+Do NOT perform your own raw math or alter any of the calculated totals. Stick strictly to the facts provided. Use neutral, professional tone. Avoid dramatic or overconfident terminology.`,
     });
 
     return response.text || contextSummary;

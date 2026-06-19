@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { DocumentRecord, AccountSummary, Transaction } from '../types';
 
+const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
+
 interface DocumentsViewProps {
   documents: DocumentRecord[];
   accounts: AccountSummary[];
@@ -46,7 +48,7 @@ export default function DocumentsView({
   
   const [formData, setFormData] = useState({
     filename: '',
-    file_type: 'Bank Statement' as DocumentRecord['file_type'],
+    file_type: 'Unknown / Needs Review' as DocumentRecord['file_type'],
     institution_name: '',
     statement_period: '',
     user_notes: ''
@@ -65,13 +67,13 @@ export default function DocumentsView({
         id: retryId,
         filename: filename.replace('_unparsed', ''),
         upload_timestamp: new Date().toISOString(),
-        file_type: 'Bank Statement',
+        file_type: 'Checking Statement',
         ocr_status: 'Success',
         ocr_confidence: 0.98,
         institution_name: 'Metro National Bank',
         statement_period: '05/01/2026 - 05/31/2026',
         processing_status: 'Completed',
-        user_notes: 'Retried failed statement ingestion'
+        user_notes: 'Retried failed document reading'
       };
       
       onAddDocument(newDoc);
@@ -92,7 +94,7 @@ export default function DocumentsView({
     catIdx: -1
   });
   const [csvAccount, setCsvAccount] = useState('');
-  const [csvDocType, setCsvDocType] = useState<DocumentRecord['file_type']>('Checking');
+  const [csvDocType, setCsvDocType] = useState<DocumentRecord['file_type']>('Checking Statement');
   const [csvInstitution, setCsvInstitution] = useState('');
   const [csvPeriod, setCsvPeriod] = useState('05/01/2026 - 05/31/2026');
   const [routeToReviewQueue, setRouteToReviewQueue] = useState(false);
@@ -113,15 +115,15 @@ export default function DocumentsView({
   const [pdfPeriod, setPdfPeriod] = useState('');
   const [pdfSuffix, setPdfSuffix] = useState('');
   const [pdfAccount, setPdfAccount] = useState('');
-  const [pdfDocType, setPdfDocType] = useState<DocumentRecord['file_type']>('Checking');
+  const [pdfDocType, setPdfDocType] = useState<DocumentRecord['file_type']>('Checking Statement');
   const [isPdfPanelOpen, setIsPdfPanelOpen] = useState(false);
   const [pdfErrorMessage, setPdfErrorMessage] = useState('');
   const [forcePdfReview, setForcePdfReview] = useState(false);
 
-  // Intelligent Text-based PDF Structured Heuristics Parser
+  // Intelligent Text-based PDF Structured Heuristics Reader
   const handleParsePdf = () => {
     if (!pdfText.trim()) {
-      setPdfErrorMessage('Please paste the textual content of your PDF statement first.');
+      setPdfErrorMessage('Paste copied document text first.');
       return;
     }
 
@@ -240,7 +242,7 @@ export default function DocumentsView({
       });
 
       if (parsed.length === 0) {
-        setPdfErrorMessage('Confidence warning: Heuristic parser found no structured transaction lines. We will parse it with 65% OCR confidence rating, which routes this file directory into the Unresolved Review Queue for safety.');
+        setPdfErrorMessage('Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.');
         setPdfParsedRows([]);
         setPdfPeriod('05/01/2026 - 05/31/2026');
       } else {
@@ -258,11 +260,6 @@ export default function DocumentsView({
   };
 
   const handleImportPdf = () => {
-    if (!pdfAccount) {
-      setPdfErrorMessage('Please bind this PDF Statement to a related custody account.');
-      return;
-    }
-
     const selectedAcc = accounts.find(a => a.id === pdfAccount);
     const suffix = pdfSuffix || selectedAcc?.account_suffix || '9955';
     const isLowConfidence = pdfParsedRows.length === 0 || forcePdfReview;
@@ -277,7 +274,7 @@ export default function DocumentsView({
       file_type: pdfDocType,
       ocr_status: isLowConfidence ? 'Low Confidence' : 'Success',
       ocr_confidence: isLowConfidence ? 0.65 : 0.95,
-      account_id: pdfAccount,
+      account_id: pdfAccount || undefined,
       institution_name: pdfInstitution || selectedAcc?.institution_name || 'Generic Bank',
       statement_period: pdfPeriod || '05/01/2026 - 05/31/2026',
       processing_status: isLowConfidence ? 'Requires Verification' : 'Completed',
@@ -321,7 +318,7 @@ export default function DocumentsView({
     setIsPdfPanelOpen(false);
   };
 
-  // Sane CSV split parser
+  // Sane CSV split reader
   const parseCSV = (text: string): string[][] => {
     const lines = text.split(/\r?\n/);
     return lines
@@ -348,7 +345,7 @@ export default function DocumentsView({
 
   const handleParseCsv = () => {
     if (!csvText.trim()) {
-      setCsvErrorMessage('Please paste some CSV text first.');
+      setCsvErrorMessage('Paste Transactions first.');
       return;
     }
     try {
@@ -386,14 +383,9 @@ export default function DocumentsView({
 
   const handleImportCsv = () => {
     if (csvParsedRows.length === 0) {
-      setCsvErrorMessage('No parsed rows to import. Parse some CSV data first.');
+      setCsvErrorMessage('No parsed rows to import. Match columns first.');
       return;
     }
-    if (!csvAccount) {
-      setCsvErrorMessage('Please select a target custody account for this statement.');
-      return;
-    }
-
     const selectedAcc = accounts.find(a => a.id === csvAccount);
     const suffix = selectedAcc ? selectedAcc.account_suffix : '4321';
     const filename = `CSV_Import_${selectedAcc?.account_name || 'Statement'}_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
@@ -407,7 +399,7 @@ export default function DocumentsView({
       file_type: csvDocType,
       ocr_status: routeToReviewQueue ? 'Low Confidence' : 'Success',
       ocr_confidence: routeToReviewQueue ? 0.65 : 0.98,
-      account_id: csvAccount,
+      account_id: csvAccount || undefined,
       institution_name: csvInstitution || selectedAcc?.institution_name || 'Generic Bank',
       statement_period: csvPeriod,
       processing_status: routeToReviewQueue ? 'Requires Verification' : 'Completed',
@@ -479,24 +471,46 @@ export default function DocumentsView({
     }
   };
 
+  const detectDocumentType = (name: string): DocumentRecord['file_type'] => {
+    const lower = name.toLowerCase();
+    if (lower.includes('credit') || lower.includes('card')) return 'Credit Card Statement';
+    if (lower.includes('saving')) return 'Savings Statement';
+    if (lower.includes('checking') || lower.includes('statement')) return 'Checking Statement';
+    if (lower.includes('paystub') || lower.includes('payroll')) return 'Paystub';
+    if (lower.includes('receipt')) return 'Receipt';
+    if (lower.includes('tax') || lower.includes('w2') || lower.includes('1099')) return 'Tax Document';
+    if (lower.includes('court')) return 'Court Document';
+    if (lower.includes('order')) return 'Legal Order';
+    if (lower.includes('loan')) return 'Loan Document';
+    if (lower.includes('utility')) return 'Utility Bill';
+    if (lower.includes('insurance')) return 'Insurance Document';
+    return 'Unknown / Needs Review';
+  };
+
   const simulateFileUpload = (name: string) => {
     setIsUploading(true);
     setTimeout(() => {
+      const detectedType = detectDocumentType(name);
+      const needsManualClassification = detectedType === 'Unknown / Needs Review';
       onAddDocument({
         id: `DOC-NEW-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
         filename: name,
         upload_timestamp: new Date().toISOString(),
-        file_type: 'Bank Statement',
-        ocr_status: 'Success',
-        ocr_confidence: parseFloat((0.85 + Math.random() * 0.14).toFixed(2)),
-        institution_name: 'Metro National Bank',
-        statement_period: '05/01/2026 - 05/31/2026',
-        processing_status: 'Completed',
-        user_notes: 'User uploaded statement simulation'
+        file_type: detectedType,
+        ocr_status: 'Low Confidence',
+        ocr_confidence: needsManualClassification ? 0.5 : 0.75,
+        institution_name: needsManualClassification ? 'Needs Review' : 'Detected',
+        statement_period: '',
+        processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
+        user_notes: needsManualClassification
+          ? 'Document uploaded, but NAFA Ledger could not read details automatically. Open the document and add missing details manually.'
+          : 'Document type detected. Please verify details and optionally associate an account.'
       });
       setIsUploading(false);
       
-      setSuccessNotification(`Document '${name}' successfully uploaded and categorized!`);
+      setSuccessNotification(needsManualClassification
+        ? `Document '${name}' uploaded. Detection needs review; open details to classify it.`
+        : `Document '${name}' uploaded. Detected ${detectedType}; please verify details.`);
       setTimeout(() => setSuccessNotification(null), 3500);
     }, 1200);
   };
@@ -523,7 +537,7 @@ export default function DocumentsView({
 
     setFormData({
       filename: '',
-      file_type: 'Bank Statement',
+      file_type: 'Checking Statement',
       institution_name: '',
       statement_period: '',
       user_notes: ''
@@ -539,15 +553,15 @@ export default function DocumentsView({
   return (
     <div className="space-y-6" id="documents-view-container">
       
-      {/* Visual upload frame + Ingestion Form */}
+      {/* Visual upload frame + Upload Area */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* Left: Drag & Drop Ingestion Zone */}
+        {/* Left: Drag & Drop Upload Zone */}
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Upload Documents Folder</h4>
+            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Upload Document</h4>
             <p className="text-xs text-slate-500 mb-4 font-sans">
-              Drag or select document files here. Documents are parsed natively on the backend page worker to retrieve context instantly.
+              Drag or select document files here. Documents are saved locally immediately. If NAFA Ledger cannot read details automatically, the document is marked Needs Review so you can add missing details manually.
             </p>
 
             <div 
@@ -565,7 +579,7 @@ export default function DocumentsView({
               {isUploading ? (
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5 text-xs text-indigo-700 font-semibold justify-center">
-                    <RotateCw className="h-3 w-3 animate-spin text-indigo-600" /> Ingestion Optical Read Parsing...
+                    <RotateCw className="h-3 w-3 animate-spin text-indigo-600" /> Reading document...
                   </div>
                   <div className="w-40 bg-slate-100 h-1 rounded overflow-hidden mx-auto">
                     <div className="bg-indigo-600 h-full animate-[loading_1s_infinite]" />
@@ -573,7 +587,7 @@ export default function DocumentsView({
                 </div>
               ) : (
                 <div className="space-y-1 select-none">
-                  <p className="text-xs font-bold text-slate-800">Drag and drop statement files here</p>
+                  <p className="text-xs font-bold text-slate-800">Drag and drop documents here</p>
                   <p className="text-[10px] text-slate-400">PDF, CSV, JPEG or TXT files supported</p>
                   <label className="inline-block mt-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-1 px-3 rounded cursor-pointer transition-colors shadow-sm">
                     Select File
@@ -593,7 +607,7 @@ export default function DocumentsView({
 
             {/* Recent Imports List & Retry Flow */}
             <div className="bg-white border text-xs border-slate-200 rounded-xl p-4 shadow-xs mt-3.5 space-y-2.5">
-              <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Ingestion Diagnostics</h5>
+              <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Upload Feedback</h5>
               <div className="space-y-1.5 max-h-40 overflow-y-auto">
                 {recentImports.map(item => (
                   <div key={item.id} className="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-150 font-mono text-[10px]">
@@ -615,7 +629,7 @@ export default function DocumentsView({
                           onClick={() => handleRetryImport(item.id, item.filename)}
                           className="text-[9px] font-sans font-bold bg-indigo-600 hover:bg-indigo-700 hover:text-white text-indigo-100 py-1 px-1.5 rounded transition-all cursor-pointer"
                         >
-                          Retry Parse
+                          Retry Reading
                         </button>
                       )}
                     </div>
@@ -626,10 +640,10 @@ export default function DocumentsView({
           </div>
         </div>
 
-        {/* Right: Manual classification Form inputs (OCR Overrider) */}
+        {/* Right: Manual classification Form inputs (metadata editor) */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">
-          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">Manual statement upload forms</h4>
-          <p className="text-xs text-slate-500 mb-4">Directly key statement details into memory to test matching rules instantaneously.</p>
+          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-2">Add Document Record Manually</h4>
+          <p className="text-xs text-slate-500 mb-4">Use this only when you want to create a document record without uploading a file.</p>
 
           <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             <div className="sm:col-span-2">
@@ -651,14 +665,9 @@ export default function DocumentsView({
                 onChange={e => setFormData({...formData, file_type: e.target.value as any})}
                 className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
               >
-                <option value="Bank Statement">Bank Statement</option>
-                <option value="Credit Card Statement">Credit Card Statement</option>
-                <option value="Paystub">Paystub</option>
-                <option value="Tax Document">Tax Document</option>
-                <option value="Court Filing">Court Filing</option>
-                <option value="Legal Order">Legal Order</option>
-                <option value="Receipt">Receipt</option>
-                <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
               </select>
             </div>
 
@@ -700,7 +709,7 @@ export default function DocumentsView({
                 type="submit"
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-colors cursor-pointer text-center"
               >
-                Incorporate Document Record
+                Add Document Record
               </button>
             </div>
           </form>
@@ -719,8 +728,8 @@ export default function DocumentsView({
               <FileUp className="h-4 w-4" />
             </div>
             <div>
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">CSV Data Pasting & Import Wizard</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Quickly import statement transactions from spreadsheets or text files with header mapping.</p>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Import Spreadsheet Data</h4>
+              <p className="text-[10px] text-slate-500 mt-0.5">Use this when you already have transaction rows copied from a bank CSV or spreadsheet.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -732,7 +741,7 @@ export default function DocumentsView({
           <div className="p-5 space-y-4 animate-fadeIn" id="csv-wizard-interior">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
               <div className="md:col-span-2 space-y-2">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase">Paste Raw CSV Text Content</label>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">Paste Transactions</label>
                 <textarea 
                   rows={6}
                   placeholder={`Date,Description,Amount,Type\n05/18/2026,"Whole Foods",124.50,debit\n05/19/2026,"YMCA Childcare",260.00,debit`}
@@ -747,11 +756,11 @@ export default function DocumentsView({
                     onClick={handleParseCsv}
                     className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded cursor-pointer transition-colors"
                   >
-                    Parse Paste Data
+                    Match Columns
                   </button>
                   {csvHeaders.length > 0 && (
                     <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                      <CheckCircle className="h-3.5 w-3.5" /> Parsed {csvParsedRows.length} rows successfully!
+                      <CheckCircle className="h-3.5 w-3.5" /> Matched {csvParsedRows.length} rows successfully!
                     </span>
                   )}
                 </div>
@@ -759,7 +768,7 @@ export default function DocumentsView({
 
               <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Target Account Custody</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Association</label>
                   <select
                     value={csvAccount}
                     onChange={e => setCsvAccount(e.target.value)}
@@ -781,14 +790,9 @@ export default function DocumentsView({
                     onChange={e => setCsvDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden"
                   >
-                    <option value="Bank Statement">Bank Statement</option>
-                    <option value="Credit Card Statement">Credit Card Statement</option>
-                    <option value="Paystub">Paystub</option>
-                    <option value="Tax Document">Tax Document</option>
-                    <option value="Court Filing">Court Filing</option>
-                    <option value="Legal Order">Legal Order</option>
-                    <option value="Receipt">Receipt</option>
-                    <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -823,8 +827,8 @@ export default function DocumentsView({
                       className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5"
                     />
                     <div>
-                      <span className="text-[10px] font-bold text-slate-700 uppercase block">Flags unclear Columns / Force Review Queue routing</span>
-                      <span className="text-[9px] text-slate-400 block -mt-0.5">Mock OCR read failure. Force confidence score to 65% to trigger low-confidence alert verification.</span>
+                      <span className="text-[10px] font-bold text-slate-700 uppercase block">Flag for Review</span>
+                      <span className="text-[9px] text-slate-400 block -mt-0.5">Mark these rows as needing review with lower read quality.</span>
                     </div>
                   </label>
                 </div>
@@ -834,7 +838,7 @@ export default function DocumentsView({
             {csvHeaders.length > 0 && (
               <div className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50 p-3 space-y-3">
                 <h5 className="text-[11px] font-bold text-slate-800 uppercase tracking-widest border-b border-slate-200 pb-1.5 flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-slate-600" /> Choose Column Header Alignments
+                  <Calendar className="h-3.5 w-3.5 text-slate-600" /> Match Columns
                 </h5>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-[10px]">
                   <div>
@@ -901,7 +905,7 @@ export default function DocumentsView({
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-md p-2.5 overflow-x-auto">
-                  <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Parsed Preview (First 4 Rows)</div>
+                  <div className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Matched Preview (First 4 Rows)</div>
                   <table className="w-full text-left font-mono text-[10px] divide-y divide-slate-100 font-normal">
                     <thead>
                       <tr className="text-slate-500 uppercase">
@@ -928,7 +932,7 @@ export default function DocumentsView({
                     onClick={handleImportCsv}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase py-2 px-5 rounded-md cursor-pointer transition-colors shadow-xs"
                   >
-                    Confirm Import ({csvParsedRows.length} Transactions)
+                    Import Transactions ({csvParsedRows.length} Transactions)
                   </button>
                 </div>
               </div>
@@ -944,7 +948,7 @@ export default function DocumentsView({
         )}
       </div>
 
-      {/* PDF Intelligent Heuristics Parser Wizard */}
+      {/* Read Document Text */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden" id="pdf-import-panel">
         <div 
           onClick={() => setIsPdfPanelOpen(!isPdfPanelOpen)}
@@ -955,8 +959,8 @@ export default function DocumentsView({
               <Sparkles className="h-4 w-4 text-indigo-600" />
             </div>
             <div>
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Extract Information (Read Document Text)</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Paste raw document text or file copy to extract active dates, raw vendors, transactions, and child balances immediately.</p>
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Read Document Text</h4>
+              <p className="text-[10px] text-slate-500 mt-0.5">If automatic reading does not work, copy text from a PDF and paste it here. NAFA Ledger will try to find dates, merchants, amounts, balances, and other useful information.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -983,11 +987,11 @@ export default function DocumentsView({
                     onClick={handleParsePdf}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded cursor-pointer transition-colors"
                   >
-                    Run Heuristic Extraction
+                    Extract Information
                   </button>
                   {pdfParsedRows.length > 0 && (
                     <span className="text-[10px] text-indigo-600 font-bold flex items-center gap-1">
-                      <CheckCircle className="h-3.5 w-3.5" /> Extracted {pdfParsedRows.length} ledger lines!
+                      <CheckCircle className="h-3.5 w-3.5" /> Extracted {pdfParsedRows.length} transactions!
                     </span>
                   )}
                 </div>
@@ -995,7 +999,7 @@ export default function DocumentsView({
 
               <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Bind to Custody Accounts</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Optional Account Association</label>
                   <select
                     value={pdfAccount}
                     onChange={e => setPdfAccount(e.target.value)}
@@ -1017,14 +1021,9 @@ export default function DocumentsView({
                     onChange={e => setPdfDocType(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden focus:border-indigo-400"
                   >
-                    <option value="Bank Statement">Bank Statement</option>
-                    <option value="Credit Card Statement">Credit Card Statement</option>
-                    <option value="Paystub">Paystub</option>
-                    <option value="Tax Document">Tax Document</option>
-                    <option value="Court Filing">Court Filing</option>
-                    <option value="Legal Order">Legal Order</option>
-                    <option value="Receipt">Receipt</option>
-                    <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -1070,8 +1069,8 @@ export default function DocumentsView({
                       className="mt-0.5 rounded border-slate-300 text-indigo-600 h-3.5 w-3.5"
                     />
                     <div>
-                      <span className="text-[10px] font-bold text-slate-700 uppercase block">Force Low-Confidence Routing</span>
-                      <span className="text-[8px] text-slate-400 block font-semibold leading-none">Pushes statements directly to the Review Queue</span>
+                      <span className="text-[10px] font-bold text-slate-700 uppercase block">Flag for Review</span>
+                      <span className="text-[8px] text-slate-400 block font-semibold leading-none">Pushes statements directly to the Needs Review</span>
                     </div>
                   </label>
                 </div>
@@ -1082,14 +1081,14 @@ export default function DocumentsView({
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <div className="bg-white border border-slate-200 rounded-md p-2.5 overflow-x-auto">
                   <div className="text-[9px] font-bold text-slate-405 uppercase tracking-widest mb-1.5 flex items-center justify-between">
-                    <span className="text-slate-500 font-bold">Heuristical Extracted PDF Records Live Preview Table</span>
+                    <span className="text-slate-500 font-bold">Extracted Information Preview</span>
                     <span className="bg-indigo-50 text-indigo-700 text-[8px] font-mono font-bold px-1.5 py-0.2 rounded border border-indigo-150">Heuristic Extraction Rating: 94%</span>
                   </div>
                   <table className="w-full text-left font-mono text-[10px] divide-y divide-slate-100 font-normal">
                     <thead>
                       <tr className="text-slate-500 uppercase text-[9px]">
                         <th className="pb-1 px-1 font-bold">Line date</th>
-                        <th className="pb-1 px-1 font-bold">Parsed Merchant / Description</th>
+                        <th className="pb-1 px-1 font-bold">Matched Merchant / Description</th>
                         <th className="pb-1 px-1 font-bold">Type</th>
                         <th className="pb-1 px-1 font-bold">Amount</th>
                         <th className="pb-1 px-1 font-bold">Running Balance</th>
@@ -1123,7 +1122,7 @@ export default function DocumentsView({
                     onClick={handleImportPdf}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase py-2 px-5 rounded-md cursor-pointer transition-colors shadow-xs"
                   >
-                    Confirm PDF statement Import ({pdfParsedRows.length} transactions)
+                    Import Transactions ({pdfParsedRows.length} transactions)
                   </button>
                 </div>
               </div>
@@ -1144,7 +1143,7 @@ export default function DocumentsView({
         <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div>
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Uploaded Documents</h4>
-            <p className="text-[10px] text-slate-500 mt-0.5">Documents loaded in raw memory custody are managed by digital hashes in the workspace sandbox.</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">Documents are stored locally in this browser workspace and can be opened to review or edit details.</p>
           </div>
 
           <div className="relative w-full sm:w-64">
@@ -1166,9 +1165,9 @@ export default function DocumentsView({
                 <th className="p-3">File details</th>
                 <th className="p-3">Type</th>
                 <th className="p-3">Date Range</th>
-                <th className="p-3">Extracted Rows</th>
-                <th className="p-3">Confidence Status</th>
-                <th className="p-3">Linked Account</th>
+                <th className="p-3">Rows Found</th>
+                <th className="p-3">Read Quality</th>
+                <th className="p-3">Associated Account</th>
                 <th className="p-3">Issues Count</th>
                 <th className="p-3 text-right">Actions</th>
               </tr>
@@ -1193,7 +1192,7 @@ export default function DocumentsView({
                         <div className="min-w-0">
                           <p className="font-semibold text-slate-900 font-mono truncate group-hover:text-indigo-650 group-hover:underline">{doc.filename}</p>
                           <span className="text-[9px] text-slate-400 block mt-0.5 font-mono">
-                            ID: {doc.id} · Ingested {new Date(doc.upload_timestamp).toLocaleDateString()}
+                            ID: {doc.id} · Uploaded {new Date(doc.upload_timestamp).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
@@ -1243,10 +1242,10 @@ export default function DocumentsView({
                         onChange={e => onLinkAccount(doc.id, e.target.value)}
                         className="bg-slate-50 border border-slate-200 rounded p-1 text-[11px] font-semibold text-slate-800 outline-hidden focus:border-indigo-400"
                       >
-                        <option value="">-- Relate to Account --</option>
+                        <option value="">-- Optional Account Association --</option>
                         {accounts.map(acc => (
                           <option key={acc.id} value={acc.id}>
-                            {acc.account_name} (*{doc.file_type === 'Paystub' ? 'Link Account' : acc.account_suffix})
+                            {acc.account_name} (*{doc.file_type === 'Paystub' ? 'Associate Account' : acc.account_suffix})
                           </option>
                         ))}
                       </select>
@@ -1265,18 +1264,18 @@ export default function DocumentsView({
                         <button
                           onClick={() => setSelectedDocForPreview(doc)}
                           className="bg-indigo-55 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded px-2 py-1 text-[10px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 select-none"
-                          title="Open sliding forensic panel & metadata editor"
+                          title="Open document details and metadata editor"
                         >
-                          👁️ View / Edit
+                          👁️ View Details
                         </button>
                         <button 
                           onClick={() => {
-                            if (confirm("Are you sure you want to permanently delete this document and remove it from ledger memory?")) {
+                            if (confirm("Are you sure you want to permanently delete this document from this workspace?")) {
                               onDeleteDocument(doc.id);
                             }
                           }}
                           className="text-slate-400 hover:text-red-650 transition-colors p-1 bg-slate-50 hover:bg-rose-50 border border-slate-150 rounded"
-                          title="Delete statement from ledger memory"
+                          title="Delete document from this workspace"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1288,7 +1287,7 @@ export default function DocumentsView({
               {filteredDocs.length === 0 && (
                 <tr>
                   <td colSpan={6} className="text-center p-8 text-slate-400 italic">
-                    No matching statement documents matched.
+                    No documents uploaded yet.
                   </td>
                 </tr>
               )}
@@ -1355,7 +1354,7 @@ export default function DocumentsView({
                   </span>
                 </div>
                 <div>
-                  <span className="block text-[9px] font-bold text-slate-400 uppercase">OCR Confidence</span>
+                  <span className="block text-[9px] font-bold text-slate-400 uppercase">Read Quality</span>
                   <span className="font-bold text-emerald-600 font-mono">
                     {Math.round(selectedDocForPreview.ocr_confidence * 100)}% ({selectedDocForPreview.ocr_status})
                   </span>
@@ -1398,14 +1397,9 @@ export default function DocumentsView({
                         }
                       }}
                     >
-                      <option value="Bank Statement">Bank Statement</option>
-                      <option value="Credit Card Statement">Credit Card Statement</option>
-                      <option value="Paystub">Paystub</option>
-                      <option value="Tax Document">Tax Document</option>
-                      <option value="Court Filing">Court Filing</option>
-                      <option value="Legal Order">Legal Order</option>
-                      <option value="Receipt">Receipt</option>
-                      <option value="Other">Other</option>
+                    {DOCUMENT_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                     </select>
                   </div>
                 </div>
@@ -1421,7 +1415,7 @@ export default function DocumentsView({
                       setSelectedDocForPreview(prev => prev ? { ...prev, account_id: accId || undefined } : null);
                     }}
                   >
-                    <option value="">-- No Linked Account (Unassociated Metadata) --</option>
+                    <option value="">-- No Associated Account (Unassociated Metadata) --</option>
                     {accounts.map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.account_name} (*{acc.account_suffix})
@@ -1431,11 +1425,11 @@ export default function DocumentsView({
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Internal Audit Notes & Commentary</label>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Notes</label>
                   <textarea 
                     rows={2}
                     className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden font-sans"
-                    placeholder="Add forensic notes regarding custody expenses, child support records, or account transfers..."
+                    placeholder="Add notes about this document..."
                     value={selectedDocForPreview.user_notes || ''}
                     onChange={e => {
                       const notes = e.target.value;
@@ -1452,10 +1446,10 @@ export default function DocumentsView({
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3 text-white">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                   <h4 className="text-[10.5px] font-bold uppercase text-emerald-450 font-mono tracking-wider">
-                    📄 Structured Layout Preview
+                    📄 Document Details
                   </h4>
                   <span className="text-[9px] font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 uppercase">
-                    Sandbox Mock Viewport
+                    Metadata View
                   </span>
                 </div>
                 
@@ -1466,19 +1460,19 @@ export default function DocumentsView({
                   </p>
                   <p className="flex justify-between text-[9px] text-slate-500">
                     <span>RECORD DATE: {selectedDocForPreview.statement_period || 'N/A'}</span>
-                    <span>AUDIT ID: #{selectedDocForPreview.id}</span>
+                    <span>DOCUMENT ID: #{selectedDocForPreview.id}</span>
                   </p>
                   <hr className="border-slate-900" />
                   <div className="text-slate-300 leading-relaxed text-[10px] space-y-1">
-                    [OCR ANALYSIS TEXT SEGMENT]
+                    [EXTRACTED TEXT PREVIEW]
                     <br />
-                    This is the extracted information layer parsed from the binary image.
+                    Preview not available yet. Document metadata and extracted information are shown below.
                     <br />
                     File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
                     <br />
-                    Confidence Interval: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
+                    Read Quality: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
                     <br />
-                    Audit status certifies this segment as <strong className="text-emerald-455">{selectedDocForPreview.ocr_status === 'Success' ? 'SECURE' : 'NEEDS ATTENTION'}</strong>.
+                    Read status: <strong className="text-emerald-500">{selectedDocForPreview.ocr_status === 'Success' ? 'Read' : 'Needs Review'}</strong>.
                   </div>
                 </div>
               </div>
@@ -1512,7 +1506,7 @@ export default function DocumentsView({
                     </div>
                   ) : (
                     <div className="p-6 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg">
-                      No extracted ledger transactions are currently bound to this document. Use the CSV/PDF parsing widgets above to load ledger lines.
+                      No extracted ledger transactions are currently bound to this document. Use the advanced tools above to load transactions.
                     </div>
                   )}
                 </div>
@@ -1524,21 +1518,21 @@ export default function DocumentsView({
             <div className="bg-slate-50 border-t p-4 flex items-center justify-between">
               <button 
                 onClick={() => {
-                  if (confirm("Are you sure you want to permanently delete this document and remove it from ledger memory?")) {
+                  if (confirm("Are you sure you want to permanently delete this document from this workspace?")) {
                     onDeleteDocument(selectedDocForPreview.id);
                     setSelectedDocForPreview(null);
                   }
                 }}
                 className="bg-rose-50 hover:bg-rose-100 text-rose-700 font-mono text-xs font-bold py-2 px-4 rounded-lg border border-rose-200 transition-colors inline-flex items-center gap-1 cursor-pointer"
               >
-                🗑️ DELETE FILE
+                🗑️ Delete
               </button>
               
               <button 
                 onClick={() => setSelectedDocForPreview(null)}
                 className="bg-slate-900 hover:bg-slate-850 text-white font-mono text-xs font-bold py-2 px-5 rounded-lg transition-colors cursor-pointer"
               >
-                ✓ DECLASSIFY & KEEP
+                Done
               </button>
             </div>
 

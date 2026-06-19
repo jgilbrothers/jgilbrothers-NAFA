@@ -1,66 +1,28 @@
 /**
- * JAI Site Engineer — Forensic Document Vault
- * Secure, over-the-air API routing client designed for Cloudflare Access integration.
+ * NAFA Ledger optional AI enhancement hooks.
+ *
+ * This static Cloudflare Pages app is offline-first. These functions intentionally
+ * do not call a hardcoded network service; callers should treat the returned rejection as
+ * an optional enhancement being unavailable and continue local workflows.
  */
-
-const BASE_URL = 'https://engine.jgilbrothers.com/api';
-
-// Administrative access headers strictly forced behind Cloudflare Zero Trust
-const CLOUDFLARE_ACCESS_HEADERS: Record<string, string> = {
-  'Content-Type': 'application/json',
-  'Cf-Access-Authenticated-User-Email': 'jgilbrothers@gmail.com',
-  'cf-access-authenticated-user-email': 'jgilbrothers@gmail.com',
-};
 
 export interface APIErrorState {
   status: number;
   message: string;
 }
 
-/**
- * Perform a hardened fetch call with mandatory credentials and zero-trust headers
- */
-async function signedFetch(endpoint: string, options: RequestInit = {}): Promise<any> {
-  const url = `${BASE_URL}${endpoint}`;
-  const response = await fetch(url, {
-    ...options,
-    credentials: 'include',
-    headers: {
-      ...CLOUDFLARE_ACCESS_HEADERS,
-      ...(options.headers || {}),
-    },
-  });
+const offlineOnly = async () => {
+  throw new Error('Optional online AI enhancement is not configured. NAFA Ledger remains available offline.');
+};
 
-  if (!response.ok) {
-    throw new Error(`HTTP Error ${response.status}: Authentication Credentials Rejected or Target Server Offline`);
-  }
-
-  return response.json();
+export async function otaExtractDocumentInfo(_filename: string, _file_type: string, _fileDataText?: string): Promise<any> {
+  return offlineOnly();
 }
 
-/**
- * 1. Live Extraction of Document metadata text
- */
-export async function otaExtractDocumentInfo(filename: string, file_type: string, fileDataText?: string): Promise<any> {
-  return signedFetch('/extract', {
-    method: 'POST',
-    body: JSON.stringify({ filename, file_type, raw_content: fileDataText }),
-  });
+export async function otaAnalyzeQuery(_query: string, _context: string): Promise<any> {
+  return offlineOnly();
 }
 
-/**
- * 2. Live AI reasoning analysis query
- */
-export async function otaAnalyzeQuery(query: string, context: string): Promise<any> {
-  return signedFetch('/analyze', {
-    method: 'POST',
-    body: JSON.stringify({ query, context }),
-  });
-}
-
-/**
- * 3. Heartbeat health check
- */
 export async function otaCheckHealth(): Promise<any> {
-  return signedFetch('/health');
+  return Promise.resolve({ ok: true, mode: 'offline-first-static' });
 }

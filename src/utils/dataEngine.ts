@@ -73,13 +73,13 @@ export function detectReconciliationQueues(
 ): ReconciliationItem[] {
   const items: ReconciliationItem[] = [];
 
-  // A. Low OCR Confidence scans
+  // A. Low Read Quality scans
   transactions.forEach(tx => {
     if (tx.confidence_score && tx.confidence_score < 0.85) {
       items.push({
         id: `REC-OCR-${tx.transaction_id}`,
         type: 'Low_Confidence',
-        title: 'Low OCR Read Confidence',
+        title: 'Low Read Quality',
         description: `Visual extraction reads "${tx.clean_vendor_name}" transaction at ${Math.round(tx.confidence_score * 100)}% accuracy. Verify amounts manually.`,
         severity: 'medium',
         transactionA: tx,
@@ -271,13 +271,9 @@ export function calculateAggregates(
     value: parseFloat(categoryTotals[cat].toFixed(2))
   })).sort((a, b) => b.value - a.value);
 
-  // Live dynamic Income vs Expense calculation
+  // Live dynamic Income vs Expense calculation. Do not seed sample months here;
+  // empty workspaces should produce empty chart arrays until real/demo transactions exist.
   const monthlyTotals: { [month: string]: { income: number; expense: number } } = {};
-  
-  // Prime with reasonable default references to keep timeline complete
-  monthlyTotals['March 2026'] = { income: 8400.00, expense: 5210.45 };
-  monthlyTotals['April 2026'] = { income: 8640.00, expense: 6194.20 };
-  monthlyTotals['May 2026'] = { income: 0, expense: 0 };
 
   nonDuplicateTransactions.forEach(tx => {
     if (tx.transfer_status === 'confirmed_transfer' || tx.category === 'Transfers') {
