@@ -713,6 +713,7 @@ export default function DocumentsView({
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
       sourcePagesApproximate: true,
+      statementPeriod: doc.statement_period,
     });
     setTransactionCandidates(candidates);
     setReviewRowsOpen(true);
@@ -730,8 +731,9 @@ export default function DocumentsView({
       return;
     }
     const suffix = accounts.find(a => a.id === doc.account_id)?.account_suffix || '0000';
+    const importBatchId = Date.now().toString(36).toUpperCase();
     const txs: Transaction[] = confirmed.map((c, idx) => ({
-      transaction_id: `TX-PDFLOCAL-${doc.id.replace(/[^A-Z0-9]/gi, '')}-${idx + 1}`,
+      transaction_id: `TX-PDFLOCAL-${doc.id.replace(/[^A-Z0-9]/gi, '')}-${importBatchId}-${idx + 1}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
       transaction_date: c.transactionDate,
       raw_description: c.rawDescription,
       clean_vendor_name: c.cleanMerchantName,

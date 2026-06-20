@@ -72,3 +72,18 @@ export async function getExtractedText(documentId: string): Promise<StoredExtrac
 export async function deleteExtractedText(documentId: string): Promise<void> {
   await withStore('readwrite', store => store.delete(documentId));
 }
+
+
+export async function deleteExtractedTextsByDocumentIds(documentIds: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    uniqueIds.forEach(id => store.delete(id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Unable to delete extracted document text.'));
+    tx.onabort = () => reject(tx.error || new Error('Extracted text deletion was aborted.'));
+  });
+}

@@ -48,6 +48,7 @@ import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage,
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
+import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -423,6 +424,7 @@ export default function App() {
 
   const handleDeleteDocument = (id: string) => {
     deleteUploadedFile(id).catch(console.error);
+    deleteExtractedText(id).catch(console.error);
     setDocuments(prev => prev.filter(d => d.id !== id));
     appendAuditLog('DELETE_STATEMENT', `Removed statement log reference ID: "${id}"`, 'warning');
   };
@@ -620,6 +622,7 @@ export default function App() {
     const documentIds = documents.map(doc => doc.id);
     clearSavedWorkspace();
     await deleteStoredFilesByDocumentIds(documentIds).catch(console.error);
+    await deleteExtractedTextsByDocumentIds(documentIds).catch(console.error);
     setAccounts([]);
     setDocuments([]);
     setTransactions([]);
