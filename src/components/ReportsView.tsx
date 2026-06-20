@@ -59,7 +59,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
   const [clientName, setClientName] = useState('Jane S. Doe');
-  const [jurisdiction, setJurisdiction] = useState('North Carolina (Wake County)');
+  const [jurisdiction, setJurisdiction] = useState('North Carolina (Durham County)');
   
   // Custom Notes
   const [customNotes, setCustomNotes] = useState('This customized baseline represents joint household expenditures established from bank record index summaries.');

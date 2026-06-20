@@ -84,14 +84,14 @@ export default function AccountsView({
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Financial Accounts Manager</h4>
-          <p className="text-xs text-slate-500 mt-0.5">Define standard asset folders and credit balances ledger links.</p>
+          <p className="text-xs text-slate-500 mt-0.5">Create account folders for checking, savings, credit cards, or other financial records. These are local categories, not bank logins.</p>
         </div>
 
         <button
           onClick={() => setShowAddForm(!showAddForm)}
           className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-3 rounded flex items-center gap-1.5 transition-colors cursor-pointer"
         >
-          <Plus className="h-3.5 w-3.5" /> Register New Account
+          <Plus className="h-3.5 w-3.5" /> Create Account Folder
         </button>
       </div>
 
@@ -99,7 +99,7 @@ export default function AccountsView({
       {showAddForm && (
         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
           <div className="sm:col-span-3 pb-2 border-b border-slate-100 flex items-center justify-between">
-            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Connect Asset or Liability Account</h5>
+            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Create Account Folder</h5>
             <button type="button" onClick={() => setShowAddForm(false)} className="text-slate-400 hover:text-slate-600">&times;</button>
           </div>
 
@@ -183,7 +183,7 @@ export default function AccountsView({
               type="submit"
               className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-4 rounded transition-colors cursor-pointer"
             >
-              Confirm Account Linkages
+              Save Account Folder
             </button>
           </div>
         </form>

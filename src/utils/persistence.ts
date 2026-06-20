@@ -2,6 +2,39 @@ import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, Ch
 import { ReconciliationItem } from './dataEngine';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
+const WORKSPACE_INDEX_KEY = 'nafa_ledger_workspace_index_v1';
+const ACTIVE_WORKSPACE_ID_KEY = 'nafa_ledger_active_workspace_id_v1';
+
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  lastOpenedAt: string;
+}
+
+const getWorkspaceKey = (id: string) => `nafa_ledger_workspace_v3_${id}`;
+const createWorkspaceId = () => `WS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+const getDefaultWorkspaceState = (name = 'Local Workspace'): WorkspaceState => {
+  const now = new Date().toISOString();
+  return {
+    accounts: [],
+    documents: [],
+    transactions: [],
+    rules: [],
+    reconItems: [],
+    auditLogs: [],
+    chatLog: [],
+    jurisdiction: 'North Carolina',
+    profile: {
+      userDisplayName: 'Local User',
+      workspaceName: name,
+      jurisdiction: 'North Carolina',
+      createdAt: now,
+      lastOpenedAt: now,
+      appVersion: (import.meta as any).env?.VITE_APP_VERSION || '1.0.0-OTA',
+    },
+  };
+};
 
 export interface LocalWorkspaceProfile {
   userDisplayName: string;
@@ -30,8 +63,11 @@ export interface WorkspaceState {
  */
 export function saveWorkspace(state: WorkspaceState): void {
   try {
+    const activeId = getActiveWorkspaceId();
     const rawData = JSON.stringify(state);
+    localStorage.setItem(getWorkspaceKey(activeId), rawData);
     localStorage.setItem(STORAGE_KEY, rawData);
+    upsertWorkspaceSummary(activeId, state.profile?.workspaceName || 'Local Workspace');
   } catch (err) {
     console.error('Failed to serialize Nafa Workspace into local client storage:', err);
   }
@@ -42,7 +78,8 @@ export function saveWorkspace(state: WorkspaceState): void {
  */
 export function loadWorkspace(): WorkspaceState | null {
   try {
-    const rawData = localStorage.getItem(STORAGE_KEY);
+    const activeId = getActiveWorkspaceId();
+    const rawData = localStorage.getItem(getWorkspaceKey(activeId)) || localStorage.getItem(STORAGE_KEY);
     if (!rawData) return null;
     const parsed = JSON.parse(rawData);
     
@@ -57,7 +94,7 @@ export function loadWorkspace(): WorkspaceState | null {
       if (!parsed.profile) {
         parsed.profile = {
           userDisplayName: 'Local User',
-          workspaceName: 'Migrated NAFA Ledger Workspace',
+          workspaceName: 'Local Workspace',
           jurisdiction: parsed.jurisdiction || 'North Carolina',
           createdAt: now,
           lastOpenedAt: now,
@@ -98,7 +135,7 @@ export function exportWorkspaceToFile(state: WorkspaceState): void {
       timestamp: new Date().toISOString(),
       metadata: {
         operator: 'OperatorAdmin',
-        client_workspace: 'NAFA-WAKE-NC',
+        client_workspace: 'NAFA-DURHAM-NC',
         purpose: 'Marital asset trace archive'
       },
       ...state
@@ -122,9 +159,65 @@ export function exportWorkspaceToFile(state: WorkspaceState): void {
  */
 export function clearSavedWorkspace(): void {
   try {
+    const activeId = getActiveWorkspaceId();
+    localStorage.removeItem(getWorkspaceKey(activeId));
+    localStorage.setItem(getWorkspaceKey(activeId), JSON.stringify(getDefaultWorkspaceState(getWorkspaceSummaries().find(w => w.id === activeId)?.name || 'Local Workspace')));
     localStorage.removeItem(STORAGE_KEY);
   } catch (err) {
     console.error('Failed to clear stored ledger metadata:', err);
   }
 }
 
+
+
+export function getWorkspaceSummaries(): WorkspaceSummary[] {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_INDEX_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+  } catch (err) {
+    console.warn('Unable to read workspace index:', err);
+  }
+  const id = getActiveWorkspaceId();
+  const summary = { id, name: 'Local Workspace', lastOpenedAt: new Date().toISOString() };
+  localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify([summary]));
+  return [summary];
+}
+
+export function getActiveWorkspaceId(): string {
+  let id = localStorage.getItem(ACTIVE_WORKSPACE_ID_KEY);
+  if (!id) {
+    id = createWorkspaceId();
+    localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
+  }
+  return id;
+}
+
+export function setActiveWorkspaceId(id: string): void {
+  localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
+  upsertWorkspaceSummary(id, getWorkspaceSummaries().find(w => w.id === id)?.name || 'Local Workspace');
+}
+
+export function upsertWorkspaceSummary(id: string, name: string): void {
+  const now = new Date().toISOString();
+  const summaries = getWorkspaceSummaries().filter(w => w.id !== id);
+  summaries.unshift({ id, name, lastOpenedAt: now });
+  localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify(summaries));
+}
+
+export function createNewWorkspace(name = 'New Workspace'): string {
+  const id = createWorkspaceId();
+  const state = getDefaultWorkspaceState(name);
+  localStorage.setItem(getWorkspaceKey(id), JSON.stringify(state));
+  setActiveWorkspaceId(id);
+  return id;
+}
+
+export function renameActiveWorkspace(name: string): void {
+  const id = getActiveWorkspaceId();
+  const current = loadWorkspace() || getDefaultWorkspaceState(name);
+  current.profile = { ...(current.profile || getDefaultWorkspaceState(name).profile!), workspaceName: name, lastOpenedAt: new Date().toISOString() };
+  current.jurisdiction = current.jurisdiction || 'North Carolina';
+  localStorage.setItem(getWorkspaceKey(id), JSON.stringify(current));
+  upsertWorkspaceSummary(id, name);
+}

@@ -42,7 +42,7 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary } from './utils/persistence';
 import { clearStoredFiles, deleteUploadedFile } from './utils/fileStorage';
 
 export default function App() {
@@ -83,13 +83,15 @@ export default function App() {
 
   // General presets
   const [jurisdiction, setJurisdiction] = useState<string>(() => {
-    return initialWorkspace?.jurisdiction ?? 'North Carolina (Wake County)';
+    return initialWorkspace?.jurisdiction ?? 'North Carolina';
   });
   const [activeAuditLevel, setActiveAuditLevel] = useState<'all' | 'warning' | 'info'>('all');
 
   const [profile, setProfile] = useState<LocalWorkspaceProfile | undefined>(() => {
     return initialWorkspace?.profile;
   });
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState(() => getActiveWorkspaceId());
+  const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>(() => getWorkspaceSummaries());
 
   // NAFA Ledger is offline-first; no startup network gate is required.
 
@@ -248,6 +250,39 @@ export default function App() {
     setAuditLogs(prev => [...prev, newLog]);
   };
 
+  const applyWorkspaceState = (workspaceState: any) => {
+    setAccounts(workspaceState?.accounts ?? []);
+    setDocuments(workspaceState?.documents ?? []);
+    setTransactions(workspaceState?.transactions ?? []);
+    setRules(workspaceState?.rules ?? []);
+    setReconItems(workspaceState?.reconItems ?? []);
+    setAuditLogs(workspaceState?.auditLogs ?? []);
+    setChatLog(workspaceState?.chatLog ?? []);
+    setJurisdiction(workspaceState?.jurisdiction ?? 'North Carolina');
+    setProfile(workspaceState?.profile);
+  };
+
+  const handleSwitchWorkspace = (workspaceId: string) => {
+    setActiveWorkspaceId(workspaceId);
+    setActiveWorkspaceIdState(workspaceId);
+    const workspaceState = loadWorkspace();
+    applyWorkspaceState(workspaceState);
+    setWorkspaceSummaries(getWorkspaceSummaries());
+  };
+
+  const handleCreateWorkspace = (name: string) => {
+    const workspaceId = createNewWorkspace(name || 'New Workspace');
+    setActiveWorkspaceIdState(workspaceId);
+    applyWorkspaceState(loadWorkspace());
+    setWorkspaceSummaries(getWorkspaceSummaries());
+  };
+
+  const handleRenameWorkspace = (name: string) => {
+    renameActiveWorkspace(name || 'Local Workspace');
+    setProfile(prev => prev ? { ...prev, workspaceName: name || 'Local Workspace', lastOpenedAt: new Date().toISOString() } : prev);
+    setWorkspaceSummaries(getWorkspaceSummaries());
+  };
+
   const handleImportBackup = async (backupState: any): Promise<boolean> => {
     try {
       setAccounts(backupState.accounts);
@@ -257,7 +292,7 @@ export default function App() {
       setReconItems(backupState.reconItems ?? []);
       setAuditLogs(backupState.auditLogs ?? []);
       setChatLog(backupState.chatLog ?? []);
-      setJurisdiction(backupState.jurisdiction ?? 'Universal Neutral Ledger');
+      setJurisdiction(backupState.jurisdiction ?? 'North Carolina');
       setProfile(backupState.profile);
       
       const timestamp = new Date().toISOString();
@@ -551,7 +586,7 @@ export default function App() {
     setReconItems([]);
     setAuditLogs([]);
     setChatLog([]);
-    setProfile(undefined);
+    setProfile(prev => prev ? { ...prev, lastOpenedAt: new Date().toISOString() } : undefined);
   };
 
   const handleClearStoredFilesOnly = async () => {
@@ -949,8 +984,8 @@ export default function App() {
             </h6>
             <div className="space-y-1.5 text-slate-400">
               <div className="flex justify-between">
-                <span>Active Ledger ID:</span>
-                <span className="font-bold text-slate-200">NAFA-WAKE-NC</span>
+                <span>Active Workspace:</span>
+                <span className="font-bold text-slate-200">{profile?.workspaceName || 'Local Workspace'}</span>
               </div>
               <div className="flex justify-between">
                 <span>Transactions Mapped:</span>
@@ -1072,6 +1107,12 @@ export default function App() {
                   onExportBackup={handleExportBackup}
                   onImportBackup={handleImportBackup}
                   onClearStoredFilesOnly={handleClearStoredFilesOnly}
+                  workspaceName={profile?.workspaceName || 'Local Workspace'}
+                  activeWorkspaceId={activeWorkspaceId}
+                  workspaceSummaries={workspaceSummaries}
+                  onCreateWorkspace={handleCreateWorkspace}
+                  onSwitchWorkspace={handleSwitchWorkspace}
+                  onRenameWorkspace={handleRenameWorkspace}
                 />
               )}
             </motion.div>

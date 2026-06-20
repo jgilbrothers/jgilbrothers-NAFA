@@ -16,6 +16,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { getStoredFileStats } from '../utils/fileStorage';
+import { WorkspaceSummary } from '../utils/persistence';
 
 interface SettingsViewProps {
   onResetDatabase: () => void;
@@ -25,6 +26,12 @@ interface SettingsViewProps {
   onExportBackup: () => void;
   onImportBackup: (backupState: any) => Promise<boolean>;
   onClearStoredFilesOnly: () => Promise<void>;
+  workspaceName: string;
+  activeWorkspaceId: string;
+  workspaceSummaries: WorkspaceSummary[];
+  onCreateWorkspace: (name: string) => void;
+  onSwitchWorkspace: (id: string) => void;
+  onRenameWorkspace: (name: string) => void;
 }
 
 const formatBytes = (bytes: number) => {
@@ -41,7 +48,13 @@ export default function SettingsView({
   onChangeJurisdiction,
   onExportBackup,
   onImportBackup,
-  onClearStoredFilesOnly
+  onClearStoredFilesOnly,
+  workspaceName,
+  activeWorkspaceId,
+  workspaceSummaries,
+  onCreateWorkspace,
+  onSwitchWorkspace,
+  onRenameWorkspace
 }: SettingsViewProps) {
   const [maskSuff, setMaskSuff] = useState(true);
   const [deepScan, setDeepScan] = useState(false);
@@ -53,6 +66,8 @@ export default function SettingsView({
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
   const [fileStats, setFileStats] = useState({ count: 0, bytes: 0 });
   const [fileStorageError, setFileStorageError] = useState('');
+  const [workspaceNameInput, setWorkspaceNameInput] = useState(workspaceName);
+  const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const isMounted = useRef(true);
 
   const refreshFileStats = async () => {
@@ -75,6 +90,10 @@ export default function SettingsView({
       isMounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    setWorkspaceNameInput(workspaceName);
+  }, [workspaceName]);
 
   const handleClearStoredFilesOnly = async () => {
     if (!confirm('Clear stored source files only? Document metadata will remain, but original files will be marked unavailable in this browser.')) return;
@@ -244,7 +263,7 @@ export default function SettingsView({
                   type="radio"
                   name="jurisdiction"
                   checked={jurisdiction.includes('North Carolina')}
-                  onChange={() => onChangeJurisdiction('North Carolina (Wake County)')}
+                  onChange={() => onChangeJurisdiction('North Carolina')}
                   className="h-4 w-4 text-indigo-600 border-slate-300 focus:ring-indigo-500"
                 />
                 <div className="min-w-0">
@@ -270,6 +289,32 @@ export default function SettingsView({
                   <span className="text-[10px] text-slate-400 font-mono">neutral-v1 multi-state templates</span>
                 </div>
               </label>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+              <Database className="h-4 w-4 text-slate-400" /> Workspace Management
+            </h5>
+            <p className="text-xs text-slate-500 leading-normal">Workspace data is stored only in this browser. Each workspace keeps its own profile, documents metadata, accounts, transactions, rules, audit logs, and chat history. Stored source file blobs remain associated by document ID.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Current Workspace Name</label>
+                <input value={workspaceNameInput} onChange={e => setWorkspaceNameInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Switch Workspace</label>
+                <select value={activeWorkspaceId} onChange={e => onSwitchWorkspace(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
+                  {workspaceSummaries.map(ws => <option key={ws.id} value={ws.id}>{ws.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => onRenameWorkspace(workspaceNameInput)} className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Rename Workspace</button>
+              <input value={newWorkspaceName} onChange={e => setNewWorkspaceName(e.target.value)} placeholder="New workspace name" className="bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-950 outline-hidden" />
+              <button type="button" onClick={() => { onCreateWorkspace(newWorkspaceName || 'New Workspace'); setNewWorkspaceName(''); }} className="bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Create New Workspace</button>
+              <button type="button" onClick={onExportBackup} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Export Current Workspace Backup</button>
+              <button type="button" onClick={handleFullReset} className="bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Reset Current Workspace</button>
             </div>
           </div>
 
@@ -390,7 +435,7 @@ export default function SettingsView({
               <HardDrive className="h-4.5 w-4.5 text-slate-400" /> Local File Storage
             </h5>
             <p className="text-slate-500 leading-normal font-medium">
-              Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices.
+              Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices. Recommended: keep your original PDFs/screenshots in your own folder outside NAFA Ledger. NAFA Ledger can store local copies for convenience, but your originals should remain backed up separately.
             </p>
             {fileStorageError && (
               <div className="bg-rose-50 text-rose-800 border border-rose-200 text-[11px] p-2 rounded-lg font-semibold">{fileStorageError}</div>
