@@ -14,7 +14,11 @@ import {
   ListTodo,
   FileCheck2,
   Lock,
-  Search
+  Search,
+  Upload,
+  Download,
+  PlusCircle,
+  FolderOpen
 } from 'lucide-react';
 
 // Custom views
@@ -42,7 +46,7 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 
 export default function App() {
@@ -92,6 +96,15 @@ export default function App() {
   });
   const [activeWorkspaceId, setActiveWorkspaceIdState] = useState(() => getActiveWorkspaceId());
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>(() => getWorkspaceSummaries());
+  const [hasOpenedProject, setHasOpenedProject] = useState(false);
+  const [selectedStartupProjectId, setSelectedStartupProjectId] = useState<string | null>(() => getActiveWorkspaceId());
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectNote, setNewProjectNote] = useState('');
+  const [newProjectJurisdiction, setNewProjectJurisdiction] = useState('North Carolina');
+  const [newProjectCounty, setNewProjectCounty] = useState('Durham County');
+  const [startupMode, setStartupMode] = useState<'home' | 'new' | 'open' | 'continue'>('home');
+  const [pendingImportState, setPendingImportState] = useState<any>(null);
+  const [importValidationError, setImportValidationError] = useState('');
 
   // NAFA Ledger is offline-first; no startup network gate is required.
 
@@ -270,25 +283,29 @@ export default function App() {
     setWorkspaceSummaries(getWorkspaceSummaries());
   };
 
-  const handleCreateWorkspace = (name: string) => {
-    const workspaceId = createNewWorkspace(name || 'New Workspace');
+  const handleCreateWorkspace = (name: string, note = '', selectedJurisdiction = 'North Carolina', county = 'Durham County') => {
+    const workspaceId = createNewWorkspace(name || 'New Project', note, selectedJurisdiction, county);
     setActiveWorkspaceIdState(workspaceId);
     applyWorkspaceState(loadWorkspace());
     setWorkspaceSummaries(getWorkspaceSummaries());
   };
 
-  const handleRenameWorkspace = (name: string) => {
+  const handleRenameWorkspace = (name: string, updates: Partial<LocalWorkspaceProfile> = {}) => {
     const cleanName = name.trim() || 'Local Workspace';
     const now = new Date().toISOString();
-    renameActiveWorkspace(cleanName);
+    renameActiveWorkspace(cleanName, updates);
     setProfile(prev => prev ? {
       ...prev,
+      ...updates,
       workspaceName: cleanName,
+      caseProjectName: cleanName,
       lastOpenedAt: now,
     } : {
       userDisplayName: 'Local User',
       workspaceName: cleanName,
-      jurisdiction: jurisdiction || 'North Carolina',
+      jurisdiction: updates.jurisdiction || jurisdiction || 'North Carolina',
+      county: updates.county || 'Durham County',
+      projectNote: updates.projectNote || '',
       createdAt: now,
       lastOpenedAt: now,
       appVersion,
@@ -298,6 +315,7 @@ export default function App() {
 
   const handleImportBackup = async (backupState: any): Promise<boolean> => {
     try {
+      if (!validateWorkspaceBackup(backupState)) return false;
       setAccounts(backupState.accounts);
       setDocuments(backupState.documents);
       setTransactions(backupState.transactions);
@@ -306,7 +324,10 @@ export default function App() {
       setAuditLogs(backupState.auditLogs ?? []);
       setChatLog(backupState.chatLog ?? []);
       setJurisdiction(backupState.jurisdiction ?? 'North Carolina');
-      setProfile(backupState.profile);
+      const importName = backupState.profile?.workspaceName || backupState.profile?.caseProjectName || 'Imported Project';
+      const workspaceId = createNewWorkspace(importName, backupState.profile?.projectNote || '', backupState.profile?.jurisdiction || backupState.jurisdiction || 'North Carolina', backupState.profile?.county || 'Durham County');
+      setActiveWorkspaceIdState(workspaceId);
+      setProfile(backupState.profile || { userDisplayName: 'Local User', workspaceName: importName, jurisdiction: backupState.jurisdiction || 'North Carolina', county: 'Durham County', createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), appVersion });
       
       const timestamp = new Date().toISOString();
       const newLog: AuditLog = {
@@ -625,11 +646,118 @@ export default function App() {
     appendAuditLog('LOAD_SAMPLE_DEMO_DATA', 'Loaded sample demo data after explicit confirmation.', 'warning');
   };
 
+
+  const activeSummary = useMemo(() => summarizeWorkspace(activeWorkspaceId, { accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile }), [activeWorkspaceId, accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
+
+  const openProjectById = (id: string) => {
+    setActiveWorkspaceId(id);
+    setActiveWorkspaceIdState(id);
+    const state = loadWorkspace();
+    applyWorkspaceState(state);
+    setWorkspaceSummaries(getWorkspaceSummaries());
+    setHasOpenedProject(true);
+    setStartupMode('home');
+  };
+
+  const handleStartupNewProject = () => {
+    const workspaceId = createNewWorkspace(newProjectName || 'New Project', newProjectNote, newProjectJurisdiction, newProjectCounty);
+    setActiveWorkspaceIdState(workspaceId);
+    applyWorkspaceState(loadWorkspace());
+    setWorkspaceSummaries(getWorkspaceSummaries());
+    setHasOpenedProject(true);
+    setStartupMode('home');
+    setNewProjectName('');
+    setNewProjectNote('');
+  };
+
+  const handleStartupImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportValidationError('');
+    const reader = new FileReader();
+    reader.onload = event => {
+      try {
+        const parsed = JSON.parse(String(event.target?.result || ''));
+        if (!validateWorkspaceBackup(parsed)) {
+          setImportValidationError('Invalid project backup. Required accounts, documents, transactions, and rules arrays were not found.');
+          return;
+        }
+        setPendingImportState(parsed);
+      } catch (err: any) {
+        setImportValidationError(`Could not read that project backup: ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const sourceLabel = (status: WorkspaceSummary['sourceFileStatus']) => status === 'yes' ? 'Yes' : status === 'partial' ? 'Partial' : 'No';
+
+  const ProjectSummaryCard: React.FC<{ summary: WorkspaceSummary; actionLabel: string; onAction: () => void }> = ({ summary, actionLabel, onAction }) => (
+    <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+      <div>
+        <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Project found</p>
+        <h3 className="text-lg font-black text-slate-950 mt-1">{summary.name}</h3>
+        {summary.note && <p className="text-sm text-slate-600 mt-2 leading-relaxed">{summary.note}</p>}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Owner</span><strong>{summary.ownerName || 'Not set'}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Last opened</span><strong>{summary.lastOpenedAt ? new Date(summary.lastOpenedAt).toLocaleString() : 'Unknown'}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Documents</span><strong>{summary.documentCount}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Accounts</span><strong>{summary.accountCount}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Transactions</span><strong>{summary.transactionCount}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Review items</span><strong>{summary.reviewItemCount}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Source files</span><strong>{sourceLabel(summary.sourceFileStatus)}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">County</span><strong>{summary.county || 'Not set'}</strong></div>
+      </div>
+      <button onClick={onAction} className="w-full sm:w-auto bg-slate-950 hover:bg-slate-800 text-white font-bold text-xs px-5 py-3 rounded-xl transition-colors">{actionLabel}</button>
+    </div>
+  );
+
   // Filters audit footer lists
   const filteredAuditsList = useMemo(() => {
     if (activeAuditLevel === 'all') return auditLogs;
     return auditLogs.filter(log => log.level === activeAuditLevel);
   }, [auditLogs, activeAuditLevel]);
+
+
+  const handleOpenImportedProject = async () => {
+    if (!pendingImportState) return;
+    const success = await handleImportBackup(pendingImportState);
+    if (success) {
+      setHasOpenedProject(true);
+      setStartupMode('home');
+      setPendingImportState(null);
+      setImportValidationError('');
+    } else {
+      setImportValidationError('Project import failed. The backup was not opened and no current project was overwritten.');
+    }
+  };
+
+  if (!hasOpenedProject) {
+    const lastSummary = workspaceSummaries.find(w => w.id === activeWorkspaceId) || workspaceSummaries[0];
+    const pendingSummary = pendingImportState ? summarizeWorkspace('pending-import', pendingImportState) : null;
+    return (
+      <div className="min-h-screen bg-slate-100 text-slate-900 p-4 md:p-8 flex items-center justify-center">
+        <div className="max-w-5xl w-full space-y-6">
+          <div className="text-center space-y-2">
+            <div className="mx-auto h-12 w-12 bg-emerald-500 rounded-2xl flex items-center justify-center font-black text-slate-950">N</div>
+            <h1 className="text-3xl md:text-4xl font-black">NAFA Ledger</h1>
+            <p className="text-slate-600 max-w-2xl mx-auto">Choose exactly what to open before sensitive financial data is displayed.</p>
+          </div>
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 md:p-6 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-3">
+            <button onClick={() => setStartupMode('new')} className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl p-5 text-left font-black shadow-sm"><PlusCircle className="h-6 w-6 mb-3" />Start New Project<span className="block text-xs font-semibold mt-1">Create a blank workspace with no demo data.</span></button>
+            {hasLocalProjects() && lastSummary && <button onClick={() => { setStartupMode('continue'); setSelectedStartupProjectId(lastSummary.id); }} className="bg-slate-950 hover:bg-slate-800 text-white rounded-xl p-5 text-left font-black"><FolderOpen className="h-6 w-6 mb-3" />Continue Last Project<span className="block text-xs font-semibold text-slate-300 mt-1">Review a summary before opening.</span></button>}
+            <button onClick={() => setStartupMode('open')} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-950 rounded-xl p-5 text-left font-black"><Upload className="h-6 w-6 mb-3" />Open Existing Project<span className="block text-xs font-semibold text-slate-500 mt-1">Pick a local project or import a backup.</span></button>
+          </div>
+          <div className="bg-indigo-950 text-indigo-100 rounded-2xl p-5 text-sm leading-relaxed">NAFA Ledger saves working projects in this browser on this device. For long-term storage or moving between devices, export a project backup/archive and keep your original source files backed up separately.<span className="block mt-2 font-bold">For large projects with years of statements, laptop or desktop use is recommended.</span></div>
+          {startupMode === 'new' && <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"><h2 className="font-black text-lg">Start New Project</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><input value={newProjectName} onChange={e => setNewProjectName(e.target.value)} placeholder="Project name" className="border rounded-lg p-3"/><input value={newProjectJurisdiction} onChange={e => setNewProjectJurisdiction(e.target.value)} placeholder="Jurisdiction" className="border rounded-lg p-3"/><input value={newProjectCounty} onChange={e => setNewProjectCounty(e.target.value)} placeholder="County" className="border rounded-lg p-3"/><textarea value={newProjectNote} onChange={e => setNewProjectNote(e.target.value)} placeholder="Optional project note/summary" className="border rounded-lg p-3 md:col-span-2"/></div><button onClick={handleStartupNewProject} className="bg-emerald-500 text-slate-950 font-black px-5 py-3 rounded-xl">Create Blank Project</button></div>}
+          {startupMode === 'continue' && lastSummary && <ProjectSummaryCard summary={lastSummary} actionLabel="Continue Project" onAction={() => openProjectById(selectedStartupProjectId || lastSummary.id)} />}
+          {startupMode === 'open' && <div className="space-y-4"><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{workspaceSummaries.map(ws => <ProjectSummaryCard key={ws.id} summary={ws} actionLabel="Open Project" onAction={() => openProjectById(ws.id)} />)}</div><div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"><h2 className="font-black text-lg">Import Project Backup</h2><label className="inline-flex items-center gap-2 bg-slate-950 text-white font-bold px-4 py-3 rounded-xl cursor-pointer"><Upload className="h-4 w-4" /> Choose backup JSON<input type="file" accept=".json,.nafa,.backup" onChange={handleStartupImportFile} className="hidden" /></label>{importValidationError && <p className="text-sm text-rose-700 font-bold">{importValidationError}</p>}{pendingSummary && <ProjectSummaryCard summary={pendingSummary} actionLabel="Open Project" onAction={() => void handleOpenImportedProject()} />}</div></div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-850 font-sans flex flex-col justify-between select-none" id="nafa-ledger-root-container">
@@ -671,8 +799,18 @@ export default function App() {
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-zinc-300">
+            Active Project: <span className="text-emerald-400 font-bold">{activeSummary.name}</span>
+          </span>
+          <span className="text-slate-500">|</span>
+          <span className="text-zinc-300">Owner: <span className="text-white font-bold">{activeSummary.ownerName || 'Not set'}</span></span>
+          <span className="text-slate-500">|</span>
+          <span className="text-zinc-300">County: <span className="text-white font-bold">{activeSummary.county || jurisdiction}</span></span>
+          <span className="text-slate-500">|</span>
+          <span className="text-zinc-300">
             Jurisdiction: <span className="text-emerald-400 font-bold">{jurisdiction}</span>
           </span>
+          <span className="text-slate-500">|</span>
+          <span className="text-zinc-300">Docs: <span className="text-white font-bold">{documents.length}</span> · Transactions: <span className="text-white font-bold">{transactions.length}</span></span>
           <span className="text-slate-500">|</span>
           <span className="text-zinc-300 flex items-center gap-1">
             <span>Sync:</span> <strong className="text-emerald-400 font-bold font-mono">100% OFFLINE-READY</strong>
@@ -680,6 +818,19 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
+          <button onClick={() => {
+            setStartupMode('new');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-emerald-500 text-slate-950 font-bold px-2 py-1 rounded uppercase">New Project</button>
+          <button onClick={() => {
+            setStartupMode('open');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Switch Project</button>
+          <button onClick={() => {
+            setStartupMode('open');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Open Existing Project</button>
+          <button onClick={handleExportBackup} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase flex items-center gap-1"><Download className="h-3 w-3" /> Export Project</button>
           {/* Desktop shortcut tip */}
           <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded flex items-center gap-1.5">
             <kbd className="font-sans font-bold bg-slate-800 px-1 rounded text-[9px] text-slate-300">Ctrl+K</kbd> Search Actions
@@ -1128,6 +1279,13 @@ export default function App() {
                   onCreateWorkspace={handleCreateWorkspace}
                   onSwitchWorkspace={handleSwitchWorkspace}
                   onRenameWorkspace={handleRenameWorkspace}
+                  projectNote={profile?.projectNote || ''}
+                  ownerName={profile?.userDisplayName || ''}
+                  county={profile?.county || 'Durham County'}
+                  documentCount={documents.length}
+                  transactionCount={transactions.length}
+                  accountCount={accounts.length}
+                  reviewItemCount={unresolvedReviewCount}
                 />
               )}
             </motion.div>
