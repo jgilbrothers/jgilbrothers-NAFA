@@ -53,26 +53,26 @@ export default function SettingsView({
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
   const [fileStats, setFileStats] = useState({ count: 0, bytes: 0 });
   const [fileStorageError, setFileStorageError] = useState('');
-  const isMountedRef = useRef(false);
+  const isMounted = useRef(true);
 
   const refreshFileStats = async () => {
     try {
-      if (isMountedRef.current) setFileStorageError('');
+      if (isMounted.current) setFileStorageError('');
       const stats = await getStoredFileStats();
-      if (isMountedRef.current) setFileStats(stats);
+      if (isMounted.current) setFileStats(stats);
     } catch (err) {
       console.error(err);
-      if (isMountedRef.current) {
+      if (isMounted.current) {
         setFileStorageError('Unable to access local file storage. Browser storage may be unavailable or full.');
       }
     }
   };
 
   useEffect(() => {
-    isMountedRef.current = true;
+    isMounted.current = true;
     refreshFileStats();
     return () => {
-      isMountedRef.current = false;
+      isMounted.current = false;
     };
   }, []);
 
@@ -83,7 +83,7 @@ export default function SettingsView({
       await refreshFileStats();
     } catch (err) {
       console.error(err);
-      if (isMountedRef.current) {
+      if (isMounted.current) {
         setFileStorageError('Unable to access local file storage. Browser storage may be unavailable or full.');
       }
     }

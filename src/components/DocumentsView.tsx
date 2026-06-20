@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   FileUp, 
   Trash2, 
@@ -574,7 +574,10 @@ export default function DocumentsView({
     if (!confirm('Delete only the stored original source file? Document metadata and extracted transactions will remain.')) return;
     try {
       await deleteUploadedFile(doc.id);
-      if (previewFileUrl) URL.revokeObjectURL(previewFileUrl);
+      if (previewObjectUrlRef.current) {
+        URL.revokeObjectURL(previewObjectUrlRef.current);
+        previewObjectUrlRef.current = '';
+      }
       setPreviewFileUrl('');
       setPreviewText('');
       setPreviewFileAvailable(false);
@@ -590,6 +593,7 @@ export default function DocumentsView({
   const [previewFileUrl, setPreviewFileUrl] = useState('');
   const [previewText, setPreviewText] = useState('');
   const [previewFileAvailable, setPreviewFileAvailable] = useState<boolean | null>(null);
+  const previewObjectUrlRef = useRef('');
   useEffect(() => {
     let active = true;
     let url = '';
@@ -613,9 +617,11 @@ export default function DocumentsView({
       url = URL.createObjectURL(stored.blob);
       if (!active || selectedDocForPreview?.id !== doc.id) {
         URL.revokeObjectURL(url);
+        if (previewObjectUrlRef.current === url) previewObjectUrlRef.current = '';
         url = '';
         return;
       }
+      previewObjectUrlRef.current = url;
       setPreviewFileAvailable(true);
       setPreviewFileUrl(url);
       const mime = stored.mimeType || doc.mime_type || '';
@@ -630,7 +636,10 @@ export default function DocumentsView({
 
     return () => {
       active = false;
-      if (url) URL.revokeObjectURL(url);
+      if (url) {
+        URL.revokeObjectURL(url);
+        if (previewObjectUrlRef.current === url) previewObjectUrlRef.current = '';
+      }
     };
   }, [selectedDocForPreview?.id]);
 
