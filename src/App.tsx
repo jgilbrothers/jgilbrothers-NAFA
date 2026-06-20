@@ -46,7 +46,7 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 
 export default function App() {
@@ -228,7 +228,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
+  }, [hasOpenedProject, accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
 
   // Command palette action trigger
   const runPaletteCommand = (action: () => void) => {
@@ -316,14 +316,15 @@ export default function App() {
   const handleImportBackup = async (backupState: any): Promise<boolean> => {
     try {
       if (!validateWorkspaceBackup(backupState)) return false;
-      setAccounts(backupState.accounts);
-      setDocuments(backupState.documents);
-      setTransactions(backupState.transactions);
-      setRules(backupState.rules);
-      setReconItems(backupState.reconItems ?? []);
-      setAuditLogs(backupState.auditLogs ?? []);
-      setChatLog(backupState.chatLog ?? []);
-      setJurisdiction(backupState.jurisdiction ?? 'North Carolina');
+      const normalizedBackup = normalizeImportedWorkspaceState(backupState);
+      setAccounts(normalizedBackup.accounts);
+      setDocuments(normalizedBackup.documents);
+      setTransactions(normalizedBackup.transactions);
+      setRules(normalizedBackup.rules);
+      setReconItems(normalizedBackup.reconItems ?? []);
+      setAuditLogs(normalizedBackup.auditLogs ?? []);
+      setChatLog(normalizedBackup.chatLog ?? []);
+      setJurisdiction(normalizedBackup.jurisdiction ?? 'North Carolina');
       const importName = backupState.profile?.workspaceName || backupState.profile?.caseProjectName || 'Imported Project';
       const workspaceId = createNewWorkspace(importName, backupState.profile?.projectNote || '', backupState.profile?.jurisdiction || backupState.jurisdiction || 'North Carolina', backupState.profile?.county || 'Durham County');
       setActiveWorkspaceIdState(workspaceId);
@@ -356,6 +357,7 @@ export default function App() {
 
   // Trigger auto-saves to LocalStorage container on state changes
   useEffect(() => {
+    if (!hasOpenedProject) return;
     saveWorkspace({
       accounts,
       documents,
@@ -367,7 +369,7 @@ export default function App() {
       jurisdiction,
       profile
     });
-  }, [accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
+  }, [hasOpenedProject, accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile]);
 
   // Unified activity logging helper
   const appendAuditLog = (action: string, details: string, level: 'info' | 'warning' | 'critical' = 'info') => {
@@ -433,6 +435,10 @@ export default function App() {
 
   const handleUpdateDocument = (docId: string, updates: Partial<DocumentRecord>) => {
     setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
+    if (updates.text_extraction_status === 'failed' || updates.text_extraction_status === 'needs_review' || (updates.needs_review_transaction_count || 0) > 0 || (updates.transaction_candidate_count === 0 && updates.transactions_extracted === false)) {
+      const reason = updates.text_extraction_error || (updates.needs_review_transaction_count ? `${updates.needs_review_transaction_count} transaction candidates need review` : 'No transactions detected');
+      setReconItems(prev => prev.some(item => item.id === `REC-DOC-${docId}`) ? prev : [...prev, { id: `REC-DOC-${docId}`, type: 'Low_Confidence', title: updates.text_extraction_status === 'failed' ? 'Text extraction failed' : 'Document extraction needs review', description: reason, severity: 'medium', documentId: docId, status: 'Unresolved' }]);
+    }
     appendAuditLog('UPDATE_DOCUMENT', `Updated document metadata for ${docId}: ${JSON.stringify(updates)}`, 'info');
   };
 
@@ -588,8 +594,8 @@ export default function App() {
   };
 
   const handleImportTransactions = (newTxs: Transaction[], newDoc: DocumentRecord) => {
-    // 1. Add the document record
-    setDocuments(prev => [...prev, newDoc]);
+    // 1. Add or update the document record
+    setDocuments(prev => prev.some(d => d.id === newDoc.id) ? prev.map(d => d.id === newDoc.id ? { ...d, ...newDoc } : d) : [...prev, newDoc]);
     
     // 2. Add the transactions to the database
     setTransactions(prev => [...newTxs, ...prev]);
@@ -707,7 +713,7 @@ export default function App() {
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Accounts</span><strong>{summary.accountCount}</strong></div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Transactions</span><strong>{summary.transactionCount}</strong></div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Review items</span><strong>{summary.reviewItemCount}</strong></div>
-        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Source files</span><strong>{sourceLabel(summary.sourceFileStatus)}</strong></div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Source files</span><strong>{sourceLabel(summary.sourceFileStatus)}</strong>{summary.sourceFileStatus !== 'yes' && <span className="block text-[10px] text-amber-700 mt-1">Source files not included in this backup. Metadata restored. Original files must be re-uploaded or restored from a full archive.</span>}</div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">County</span><strong>{summary.county || 'Not set'}</strong></div>
       </div>
       <button onClick={onAction} className="w-full sm:w-auto bg-slate-950 hover:bg-slate-800 text-white font-bold text-xs px-5 py-3 rounded-xl transition-colors">{actionLabel}</button>
@@ -736,7 +742,7 @@ export default function App() {
 
   if (!hasOpenedProject) {
     const lastSummary = workspaceSummaries.find(w => w.id === activeWorkspaceId) || workspaceSummaries[0];
-    const pendingSummary = pendingImportState ? summarizeWorkspace('pending-import', pendingImportState) : null;
+    const pendingSummary = pendingImportState ? summarizeWorkspace('pending-import', normalizeImportedWorkspaceState(pendingImportState)) : null;
     return (
       <div className="min-h-screen bg-slate-100 text-slate-900 p-4 md:p-8 flex items-center justify-center">
         <div className="max-w-5xl w-full space-y-6">

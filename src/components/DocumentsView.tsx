@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import { DocumentRecord, AccountSummary, Transaction } from '../types';
 import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/fileStorage';
+import { extractPdfText } from '../utils/pdfTextExtractor';
+import { getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
+import { extractTransactionCandidates, TransactionCandidate } from '../utils/transactionExtractor';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
@@ -521,6 +524,8 @@ export default function DocumentsView({
         source_file_status: 'stored',
         type_detected: !needsManualClassification,
         text_read: false,
+        extracted_text_available: false,
+        text_extraction_status: 'not_started',
         transactions_extracted: false,
       };
       onAddDocument(newDoc);
@@ -586,6 +591,10 @@ export default function DocumentsView({
   const [previewText, setPreviewText] = useState('');
   const [previewFileAvailable, setPreviewFileAvailable] = useState<boolean | null>(null);
   const [previewError, setPreviewError] = useState('');
+  const [extractedText, setExtractedText] = useState('');
+  const [extractionBusy, setExtractionBusy] = useState(false);
+  const [transactionCandidates, setTransactionCandidates] = useState<TransactionCandidate[]>([]);
+  const [reviewRowsOpen, setReviewRowsOpen] = useState(false);
   const previewObjectUrlRef = useRef('');
   useEffect(() => {
     let active = true;
@@ -595,7 +604,14 @@ export default function DocumentsView({
     setPreviewText('');
     setPreviewFileAvailable(null);
     setPreviewError('');
+    setExtractedText('');
+    setTransactionCandidates([]);
+    setReviewRowsOpen(false);
     if (!doc) return;
+
+    getExtractedText(doc.id).then(storedText => {
+      if (active && storedText) setExtractedText(storedText.text);
+    }).catch(console.error);
 
     getUploadedFile(doc.id).then(async stored => {
       if (!active || selectedDocForPreview?.id !== doc.id) return;
@@ -636,6 +652,99 @@ export default function DocumentsView({
       }
     };
   }, [selectedDocForPreview?.id]);
+
+
+
+  const readPdfTextFromStoredFile = async (doc: DocumentRecord) => {
+    if (!doc.mime_type?.includes('pdf') && !doc.filename.toLowerCase().endsWith('.pdf')) return;
+    setExtractionBusy(true);
+    const extracting: Partial<DocumentRecord> = { text_extraction_status: 'extracting' };
+    onUpdateDocument?.(doc.id, extracting);
+    setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...extracting } : prev);
+    try {
+      const stored = await getUploadedFile(doc.id);
+      if (!stored?.blob) throw new Error('Original source PDF is not available in this browser.');
+      if ((stored.size || stored.blob.size) > 12 * 1024 * 1024) {
+        setErrorNotification('This PDF may be large for mobile processing. Laptop/desktop is recommended for heavy statement extraction.');
+      }
+      const result = await extractPdfText(stored.blob);
+      const now = new Date().toISOString();
+      if (result.text) {
+        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now });
+        setExtractedText(result.text);
+      }
+      const updates: Partial<DocumentRecord> = {
+        text_read: result.status === 'succeeded',
+        text_read_at: now,
+        extracted_text_available: Boolean(result.text),
+        extracted_text_id: result.text ? doc.id : undefined,
+        extracted_text_preview: result.text.slice(0, 500),
+        page_count: result.pageCount,
+        text_extraction_status: result.status,
+        text_extraction_error: result.error,
+        ocr_status: result.status === 'succeeded' ? 'Success' : 'Low Confidence',
+        ocr_confidence: result.confidence,
+        processing_status: result.status === 'succeeded' ? 'Requires Verification' : 'Requires Verification',
+      };
+      onUpdateDocument?.(doc.id, updates);
+      setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+      if (result.error) setErrorNotification(result.error);
+      else setSuccessNotification(`Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.`);
+    } catch (err: any) {
+      const message = `${err?.message || 'Text extraction failed'} OCR will be needed for this document in a later phase.`;
+      const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'Failed', ocr_confidence: 0, processing_status: 'Requires Verification' };
+      onUpdateDocument?.(doc.id, updates);
+      setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+      setErrorNotification(message);
+    } finally {
+      setExtractionBusy(false);
+    }
+  };
+
+  const extractTransactionsForSelectedDocument = async (doc: DocumentRecord) => {
+    const stored = await getExtractedText(doc.id).catch(() => undefined);
+    const text = stored?.text || extractedText;
+    if (!text.trim()) {
+      setErrorNotification('Read PDF text before extracting transactions.');
+      return;
+    }
+    const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts);
+    setTransactionCandidates(candidates);
+    setReviewRowsOpen(true);
+    const needsReview = candidates.filter(c => c.needsReview).length;
+    const updates: Partial<DocumentRecord> = { transactions_extracted: candidates.length > 0, transaction_candidate_count: candidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id).length };
+    onUpdateDocument?.(doc.id, updates);
+    setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+    setSuccessNotification(candidates.length ? `Found ${candidates.length} transaction candidate(s). Review before importing.` : 'No transactions detected. This document needs review.');
+  };
+
+  const importConfirmedCandidates = (doc: DocumentRecord) => {
+    const confirmed = transactionCandidates.filter(c => !c.excluded && !c.needsReview && c.transactionType !== 'unknown');
+    if (confirmed.length === 0) {
+      setErrorNotification('No confirmed transaction candidates are ready to import. Clear review flags or exclude uncertain rows first.');
+      return;
+    }
+    const suffix = accounts.find(a => a.id === doc.account_id)?.account_suffix || '0000';
+    const txs: Transaction[] = confirmed.map((c, idx) => ({
+      transaction_id: `TX-PDFLOCAL-${doc.id.replace(/[^A-Z0-9]/gi, '')}-${idx + 1}`,
+      transaction_date: c.transactionDate,
+      raw_description: c.rawDescription,
+      clean_vendor_name: c.cleanMerchantName,
+      amount: c.amount,
+      transaction_type: c.transactionType === 'credit' ? 'credit' : 'debit',
+      processing_method: 'Other',
+      card_or_account_suffix: suffix,
+      category: 'Miscellaneous',
+      is_pending: false,
+      running_balance: c.runningBalance,
+      notes: c.note,
+      source_document_id: doc.id,
+      confidence_score: c.confidenceScore,
+    }));
+    onImportTransactions?.(txs, { ...doc, confirmed_transaction_count: (doc.confirmed_transaction_count || 0) + txs.length, transactions_extracted: true });
+    setTransactionCandidates(prev => prev.filter(c => !confirmed.includes(c)));
+    setSuccessNotification(`Imported ${txs.length} confirmed transaction(s).`);
+  };
 
   const filteredDocs = documents.filter(doc => 
     doc.filename.toLowerCase().includes(searchText.toLowerCase()) ||
@@ -1394,8 +1503,8 @@ Files are stored in this browser’s local storage for this device and website. 
                 <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Document Storage Status</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'Metadata only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Document Text</span>{selectedDocForPreview.text_read ? 'Text read' : selectedDocForPreview.ocr_status === 'Low Confidence' ? 'Needs review' : 'Not read yet'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{transactions.some(t => t.source_document_id === selectedDocForPreview.id) ? (selectedDocForPreview.transactions_extracted ? 'Transactions found' : 'Imported manually') : 'Not extracted yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Document Text</span>{selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read successfully' : selectedDocForPreview.text_extraction_status === 'failed' || selectedDocForPreview.text_extraction_status === 'needs_review' ? 'Failed / OCR needed' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
                 {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">Source file unavailable in this browser.</p>
@@ -1404,6 +1513,9 @@ Files are stored in this browser’s local storage for this device and website. 
                   <a href="#source-file-preview" onClick={() => { if (!previewFileAvailable) alert('Original source file is not available in this browser.'); }} className={`bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1 ${!previewFileAvailable ? 'opacity-50 cursor-not-allowed' : ''}`}><Eye className="h-3.5 w-3.5" /> View File</a>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
+                  {(selectedDocForPreview.mime_type?.includes('pdf') || selectedDocForPreview.filename.toLowerCase().endsWith('.pdf')) && <button type="button" disabled={!previewFileAvailable || extractionBusy} onClick={() => readPdfTextFromStoredFile(selectedDocForPreview)} className="bg-indigo-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {extractionBusy ? 'Reading...' : 'Read PDF Text'}</button>}
+                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => setReviewRowsOpen(v => !v)} className="bg-white border border-indigo-200 text-indigo-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> View Extracted Text</button>}
+                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => extractTransactionsForSelectedDocument(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> Extract Transactions</button>}
                 </div>
               </div>
 
@@ -1500,7 +1612,7 @@ Files are stored in this browser’s local storage for this device and website. 
                   </span>
                 </div>
                 
-                <div className="bg-slate-950 rounded-lg p-5 border border-slate-850 font-mono text-[10px] text-slate-405 space-y-3 select-text max-h-[160px] overflow-y-auto">
+                <div className="bg-slate-950 rounded-lg p-5 border border-slate-850 font-mono text-[10px] text-slate-405 space-y-3 select-text max-h-[260px] overflow-y-auto">
                   <p className="text-white font-bold text-center border-b border-slate-900 pb-1 uppercase text-xs">
                     {selectedDocForPreview.institution_name || 'Generic Bank Corp'}
                   </p>
@@ -1518,7 +1630,11 @@ Files are stored in this browser’s local storage for this device and website. 
                     <br />
                     Detection Confidence: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
                     <br />
-                    Text read: <strong className="text-emerald-500">{selectedDocForPreview.text_read ? 'Yes' : 'No'}</strong>.
+                    Text read: <strong className="text-emerald-500">{selectedDocForPreview.text_read ? 'Yes' : 'No'}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
+                    <br />
+                    Extracted text length: <strong className="text-emerald-500">{extractedText.length.toLocaleString()}</strong>.
+                    {selectedDocForPreview.text_extraction_error && <><br /><span className="text-amber-300">{selectedDocForPreview.text_extraction_error}</span></>}
+                    {extractedText && <><br /><br /><span className="text-slate-100 whitespace-pre-wrap">{extractedText.slice(0, 2000)}</span></>}
                   </div>
                 </div>
               </div>
@@ -1543,6 +1659,21 @@ Files are stored in this browser’s local storage for this device and website. 
                   <div className="p-4 text-center text-slate-500 bg-slate-50 border border-dashed rounded-lg text-xs">Preview unavailable. Download original to view.</div>
                 ))}
               </div>
+
+              {reviewRowsOpen && transactionCandidates.length > 0 && (
+                <div className="bg-white border border-indigo-200 rounded-xl p-4 space-y-3 shadow-2xs">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider">Review Extracted Transactions</h4>
+                    <button type="button" onClick={() => importConfirmedCandidates(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 text-[10px] font-bold uppercase">Import Confirmed Transactions</button>
+                  </div>
+                  <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals.</div>
+                  <div className="max-h-72 overflow-auto">
+                    <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
+                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
+                    </tbody></table>
+                  </div>
+                </div>
+              )}
 
               {/* EXTRACTED INFORMATION ROW INDICES */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
