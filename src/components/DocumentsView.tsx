@@ -1531,7 +1531,10 @@ Files are stored in this browser’s local storage for this device and website. 
                 {!previewFileUrl ? (
                   <div className="p-4 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg text-xs">Preview unavailable in this browser. The original file is still stored and can be downloaded.</div>
                 ) : (selectedDocForPreview.mime_type?.includes('pdf') ? (
-                  <iframe src={previewFileUrl} title="PDF source preview" onError={() => setPreviewError('Preview unavailable in this browser. The original file is still stored and can be downloaded.')} className="w-full h-96 rounded border border-slate-200" />
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">If the PDF does not display here, use Download Original.</p>
+                    <iframe src={previewFileUrl} title="PDF source preview" className="w-full h-96 rounded border border-slate-200" />
+                  </div>
                 ) : selectedDocForPreview.mime_type?.startsWith('image/') ? (
                   <img src={previewFileUrl} alt="Source file preview" onError={() => setPreviewError('Preview unavailable in this browser. The original file is still stored and can be downloaded.')} className="max-h-96 rounded border border-slate-200 mx-auto" />
                 ) : previewText ? (

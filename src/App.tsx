@@ -43,7 +43,7 @@ import {
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary } from './utils/persistence';
-import { clearStoredFiles, deleteUploadedFile } from './utils/fileStorage';
+import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -278,8 +278,21 @@ export default function App() {
   };
 
   const handleRenameWorkspace = (name: string) => {
-    renameActiveWorkspace(name || 'Local Workspace');
-    setProfile(prev => prev ? { ...prev, workspaceName: name || 'Local Workspace', lastOpenedAt: new Date().toISOString() } : prev);
+    const cleanName = name.trim() || 'Local Workspace';
+    const now = new Date().toISOString();
+    renameActiveWorkspace(cleanName);
+    setProfile(prev => prev ? {
+      ...prev,
+      workspaceName: cleanName,
+      lastOpenedAt: now,
+    } : {
+      userDisplayName: 'Local User',
+      workspaceName: cleanName,
+      jurisdiction: jurisdiction || 'North Carolina',
+      createdAt: now,
+      lastOpenedAt: now,
+      appVersion,
+    });
     setWorkspaceSummaries(getWorkspaceSummaries());
   };
 
@@ -576,9 +589,10 @@ export default function App() {
   };
 
   // Resets ledger databases immediately
-  const handleResetDatabase = () => {
+  const handleResetDatabase = async () => {
+    const documentIds = documents.map(doc => doc.id);
     clearSavedWorkspace();
-    clearStoredFiles().catch(console.error);
+    await deleteStoredFilesByDocumentIds(documentIds).catch(console.error);
     setAccounts([]);
     setDocuments([]);
     setTransactions([]);
@@ -590,13 +604,14 @@ export default function App() {
   };
 
   const handleClearStoredFilesOnly = async () => {
-    await clearStoredFiles();
+    const documentIds = documents.map(doc => doc.id);
+    await deleteStoredFilesByDocumentIds(documentIds);
     setDocuments(prev => prev.map(doc => ({
       ...doc,
       source_file_status: doc.source_file_status === 'stored' ? 'unavailable' : doc.source_file_status,
       local_file: doc.local_file ? { ...doc.local_file, stored: false } : doc.local_file,
     })));
-    appendAuditLog('CLEAR_STORED_SOURCE_FILES', 'Cleared stored local source file blobs while retaining document metadata.', 'warning');
+    appendAuditLog('CLEAR_STORED_SOURCE_FILES', 'Cleared stored local source file blobs for the current workspace while retaining document metadata.', 'warning');
   };
 
   const handleLoadSampleDemoData = () => {

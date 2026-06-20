@@ -98,6 +98,20 @@ export async function clearStoredFiles(): Promise<void> {
   await withStore('readwrite', store => store.clear());
 }
 
+export async function deleteStoredFilesByDocumentIds(documentIds: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(documentIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return;
+  const db = await openFileDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    uniqueIds.forEach(id => store.delete(id));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('Unable to delete scoped local source files.'));
+    tx.onabort = () => reject(tx.error || new Error('Scoped local source file deletion was aborted.'));
+  });
+}
+
 export async function getStoredFileStats(): Promise<{ count: number; bytes: number }> {
   const db = await openFileDb();
   return new Promise((resolve, reject) => {

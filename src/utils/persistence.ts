@@ -195,7 +195,17 @@ export function getActiveWorkspaceId(): string {
 
 export function setActiveWorkspaceId(id: string): void {
   localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
-  upsertWorkspaceSummary(id, getWorkspaceSummaries().find(w => w.id === id)?.name || 'Local Workspace');
+  const summaryName = getWorkspaceSummaries().find(w => w.id === id)?.name;
+  const stored = localStorage.getItem(getWorkspaceKey(id));
+  let storedName = '';
+  if (stored) {
+    try {
+      storedName = JSON.parse(stored)?.profile?.workspaceName || '';
+    } catch {
+      storedName = '';
+    }
+  }
+  upsertWorkspaceSummary(id, summaryName || storedName || 'Local Workspace');
 }
 
 export function upsertWorkspaceSummary(id: string, name: string): void {
@@ -206,10 +216,12 @@ export function upsertWorkspaceSummary(id: string, name: string): void {
 }
 
 export function createNewWorkspace(name = 'New Workspace'): string {
+  const cleanName = name.trim() || 'New Workspace';
   const id = createWorkspaceId();
-  const state = getDefaultWorkspaceState(name);
+  const state = getDefaultWorkspaceState(cleanName);
   localStorage.setItem(getWorkspaceKey(id), JSON.stringify(state));
-  setActiveWorkspaceId(id);
+  upsertWorkspaceSummary(id, cleanName);
+  localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
   return id;
 }
 

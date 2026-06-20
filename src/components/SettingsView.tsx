@@ -19,7 +19,7 @@ import { getStoredFileStats } from '../utils/fileStorage';
 import { WorkspaceSummary } from '../utils/persistence';
 
 interface SettingsViewProps {
-  onResetDatabase: () => void;
+  onResetDatabase: () => void | Promise<void>;
   onLoadSampleDemoData: () => void;
   jurisdiction: string;
   onChangeJurisdiction: (j: string) => void;
@@ -96,7 +96,7 @@ export default function SettingsView({
   }, [workspaceName]);
 
   const handleClearStoredFilesOnly = async () => {
-    if (!confirm('Clear stored source files only? Document metadata will remain, but original files will be marked unavailable in this browser.')) return;
+    if (!confirm('Clear stored source files for the current workspace only? Document metadata will remain, but original files for this workspace will be marked unavailable in this browser.')) return;
     try {
       await onClearStoredFilesOnly();
       await refreshFileStats();
@@ -117,8 +117,8 @@ export default function SettingsView({
   };
 
   const handleFullReset = () => {
-    if (confirm('Reset Workspace clears your local NAFA Ledger workspace data. Export a backup first if you want to preserve it.')) {
-      onResetDatabase();
+    if (confirm('Reset Workspace clears this current workspace data and only its stored source files. Other local workspaces are not reset. Export a backup first if you want to preserve it.')) {
+      void onResetDatabase();
       setShowSeedMsg(true);
       setTimeout(() => {
         setShowSeedMsg(false);
@@ -447,7 +447,7 @@ export default function SettingsView({
             <div className="space-y-2 border-t border-slate-100 pt-3">
               <button type="button" onClick={refreshFileStats} className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Refresh Storage Status</button>
               <button type="button" onClick={onExportBackup} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Export Workspace Backup</button>
-              <button type="button" onClick={handleClearStoredFilesOnly} className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Clear Stored Files Only</button>
+              <button type="button" onClick={handleClearStoredFilesOnly} className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Clear Stored Files For Current Workspace</button>
             </div>
           </div>
 
