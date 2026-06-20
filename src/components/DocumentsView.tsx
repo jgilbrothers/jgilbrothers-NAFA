@@ -51,10 +51,7 @@ export default function DocumentsView({
   const [successNotification, setSuccessNotification] = useState<string | null>(null);
   const [errorNotification, setErrorNotification] = useState<string | null>(null);
   
-  const [recentImports, setRecentImports] = useState<{id: string; filename: string; timestamp: string; status: 'completed' | 'failed'}[]>([
-    { id: 'REC-1', filename: 'Chasechecking_May2026.csv', timestamp: '2026-06-05', status: 'completed' },
-    { id: 'REC-2', filename: 'Paystub_June2026_unparsed.pdf', timestamp: '2026-06-06', status: 'failed' }
-  ]);
+  const [recentImports, setRecentImports] = useState<{id: string; filename: string; timestamp: string; status: 'completed' | 'failed'}[]>([]);
 
   useEffect(() => {
     if (!successNotification) return;
@@ -67,29 +64,6 @@ export default function DocumentsView({
     const timer = window.setTimeout(() => setErrorNotification(null), 6500);
     return () => window.clearTimeout(timer);
   }, [errorNotification]);
-
-  const handleRetryImport = (id: string, filename: string) => {
-    setIsUploading(true);
-    setTimeout(() => {
-      const retryId = `DOC-RETRY-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      const newDoc: DocumentRecord = {
-        id: retryId,
-        filename: filename.replace('_unparsed', ''),
-        upload_timestamp: new Date().toISOString(),
-        file_type: 'Checking Statement',
-        ocr_status: 'Success',
-        ocr_confidence: 0.98,
-        institution_name: 'Metro National Bank',
-        statement_period: '05/01/2026 - 05/31/2026',
-        processing_status: 'Completed',
-        user_notes: 'Retried failed document reading'
-      };
-      
-      onAddDocument(newDoc);
-      setRecentImports(prev => prev.map(item => item.id === id ? { ...item, status: 'completed', id: retryId } : item));
-      setIsUploading(false);
-    }, 1000);
-  };
 
   // CSV paste/import workflow states
   const [csvText, setCsvText] = useState('');
@@ -105,7 +79,7 @@ export default function DocumentsView({
   const [csvAccount, setCsvAccount] = useState('');
   const [csvDocType, setCsvDocType] = useState<DocumentRecord['file_type']>('Checking Statement');
   const [csvInstitution, setCsvInstitution] = useState('');
-  const [csvPeriod, setCsvPeriod] = useState('05/01/2026 - 05/31/2026');
+  const [csvPeriod, setCsvPeriod] = useState('');
   const [routeToReviewQueue, setRouteToReviewQueue] = useState(false);
   const [isCsvPanelOpen, setIsCsvPanelOpen] = useState(false);
   const [csvErrorMessage, setCsvErrorMessage] = useState('');
@@ -253,7 +227,7 @@ export default function DocumentsView({
       if (parsed.length === 0) {
         setPdfErrorMessage('Document text was not read automatically. Use Read Document Text or Import Spreadsheet Data if you want to add transactions.');
         setPdfParsedRows([]);
-        setPdfPeriod('05/01/2026 - 05/31/2026');
+        setPdfPeriod('');
       } else {
         setPdfErrorMessage('');
         setPdfParsedRows(parsed);
@@ -358,7 +332,7 @@ export default function DocumentsView({
 
   const handleParseCsv = () => {
     if (!csvText.trim()) {
-      setCsvErrorMessage('Paste Transactions first.');
+      setCsvErrorMessage('Paste spreadsheet transaction rows first.');
       return;
     }
     try {
@@ -488,11 +462,28 @@ export default function DocumentsView({
     }
   };
 
+  const detectInstitutionFromFilename = (name: string): string => {
+    const lower = name.toLowerCase();
+    const institutionPatterns: { label: string; patterns: RegExp[] }[] = [
+      { label: 'Bank of America', patterns: [/bank\s*of\s*america/, /\bbofa\b/, /\bboa\b/] },
+      { label: 'American Express', patterns: [/american\s*express/, /\bamex\b/] },
+      { label: 'Navy Federal', patterns: [/navy\s*federal/] },
+      { label: 'Capital One', patterns: [/capital\s*one/] },
+      { label: 'Wells Fargo', patterns: [/wells\s*fargo/] },
+      { label: 'Citibank', patterns: [/citibank/, /\bciti\b/] },
+      { label: 'Discover', patterns: [/discover/] },
+      { label: 'Chase', patterns: [/chase/, /jpmorgan/, /jp\s*morgan/] },
+      { label: 'USAA', patterns: [/\busaa\b/] },
+      { label: 'SECU', patterns: [/\bsecu\b/, /state\s*employees\s*credit\s*union/] },
+    ];
+    return institutionPatterns.find(inst => inst.patterns.some(pattern => pattern.test(lower)))?.label || '';
+  };
+
   const detectDocumentType = (name: string): DocumentRecord['file_type'] => {
     const lower = name.toLowerCase();
     if (lower.includes('credit') || lower.includes('card')) return 'Credit Card Statement';
     if (lower.includes('saving')) return 'Savings Statement';
-    if (lower.includes('checking') || lower.includes('statement')) return 'Checking Statement';
+    if (lower.includes('checking') || lower.includes('chequing') || lower.includes('statement')) return 'Checking Statement';
     if (lower.includes('paystub') || lower.includes('payroll')) return 'Paystub';
     if (lower.includes('receipt')) return 'Receipt';
     if (lower.includes('tax') || lower.includes('w2') || lower.includes('1099')) return 'Tax Document';
@@ -508,6 +499,7 @@ export default function DocumentsView({
     setIsUploading(true);
     const docId = `DOC-FILE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const detectedType = detectDocumentType(file.name);
+    const detectedInstitution = detectInstitutionFromFilename(file.name);
     const needsManualClassification = detectedType === 'Unknown / Needs Review';
     try {
       const stored = await saveUploadedFile(docId, file);
@@ -521,10 +513,10 @@ export default function DocumentsView({
         file_type: detectedType,
         ocr_status: needsManualClassification ? 'Low Confidence' : 'Pending',
         ocr_confidence: needsManualClassification ? 0.5 : 0.75,
-        institution_name: needsManualClassification ? 'Needs Review' : 'Detected from filename',
+        institution_name: detectedInstitution || 'Not detected',
         statement_period: '',
         processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
-        user_notes: 'Source file stored locally. Type may be detected from filename only; text has not been read and transactions have not been extracted.',
+        user_notes: 'Source file stored locally. Institution and type may be detected from filename only; document text has not been read and transactions have not been extracted.',
         local_file: { storage: 'indexeddb', stored: true },
         source_file_status: 'stored',
         type_detected: !needsManualClassification,
@@ -593,6 +585,7 @@ export default function DocumentsView({
   const [previewFileUrl, setPreviewFileUrl] = useState('');
   const [previewText, setPreviewText] = useState('');
   const [previewFileAvailable, setPreviewFileAvailable] = useState<boolean | null>(null);
+  const [previewError, setPreviewError] = useState('');
   const previewObjectUrlRef = useRef('');
   useEffect(() => {
     let active = true;
@@ -601,6 +594,7 @@ export default function DocumentsView({
     setPreviewFileUrl('');
     setPreviewText('');
     setPreviewFileAvailable(null);
+    setPreviewError('');
     if (!doc) return;
 
     getUploadedFile(doc.id).then(async stored => {
@@ -704,11 +698,13 @@ export default function DocumentsView({
               )}
             </div>
 
-            {/* Recent Imports List & Retry Flow */}
+            {/* Recent Upload Feedback */}
             <div className="bg-white border text-xs border-slate-200 rounded-xl p-4 shadow-xs mt-3.5 space-y-2.5">
               <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Recent Upload Feedback</h5>
               <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                {recentImports.map(item => (
+                {recentImports.length === 0 ? (
+                  <div className="p-3 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg font-sans text-[11px]">No recent uploads yet.</div>
+                ) : recentImports.map(item => (
                   <div key={item.id} className="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-150 font-mono text-[10px]">
                     <div className="min-w-0 flex items-center gap-2">
                       <span className={`h-2 w-2.5 rounded-full shrink-0 ${
@@ -722,15 +718,7 @@ export default function DocumentsView({
                       }`}>
                         {item.status}
                       </span>
-                      {item.status === 'failed' && (
-                        <button
-                          type="button"
-                          onClick={() => handleRetryImport(item.id, item.filename)}
-                          className="text-[9px] font-sans font-bold bg-indigo-600 hover:bg-indigo-700 hover:text-white text-indigo-100 py-1 px-1.5 rounded transition-all cursor-pointer"
-                        >
-                          Retry Reading
-                        </button>
-                      )}
+
                     </div>
                   </div>
                 ))}
@@ -746,7 +734,7 @@ export default function DocumentsView({
             Manual document records are disabled. Upload a source file to create a document record.
           </p>
           <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-lg p-3 text-[11px] leading-relaxed">
-            Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices.
+Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices. Recommended: keep your original PDFs/screenshots in your own folder outside NAFA Ledger. NAFA Ledger can store local copies for convenience, but your originals should remain backed up separately.
           </div>
         </div>
 
@@ -764,7 +752,7 @@ export default function DocumentsView({
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Import Spreadsheet Data</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Use this when you already have transaction rows copied from a bank CSV or spreadsheet.</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Use this only when you already have transaction rows copied from a bank CSV or spreadsheet. This does not read your PDF automatically.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -1010,7 +998,7 @@ export default function DocumentsView({
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Paste Text Content from Text-based PDF or Bank Portal Clip</label>
                 <textarea 
                   rows={6}
-                  placeholder={`CHASE BANK STATEMENT FOR ACCOUNT *5531\n05/10/2026   WHOLE FOODS MARKET $84.20    BAL $4,510.35\n05/12/2026   METRO POWER GASOLINE COMMISSION -$34.20  BAL $4,476.15\n05/14/2026   DIRECT DEPOSIT NC STATE PAYROLL +$3,500.00`}
+                  placeholder="No document text loaded yet. Copy text from a PDF or bank portal and paste it here."
                   value={pdfText}
                   onChange={e => setPdfText(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded p-2.5 text-slate-900 font-mono text-[11px] outline-hidden focus:border-indigo-400 focus:bg-white"
@@ -1385,7 +1373,7 @@ export default function DocumentsView({
                 <div>
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Institution Name</span>
                   <span className="font-semibold text-slate-800">
-                    {selectedDocForPreview.institution_name || 'N/A'}
+                    {selectedDocForPreview.institution_name || 'Not detected'}
                   </span>
                 </div>
                 <div>
@@ -1397,23 +1385,23 @@ export default function DocumentsView({
                 <div>
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Detection Confidence</span>
                   <span className="font-bold text-emerald-600 font-mono">
-                    {Math.round(selectedDocForPreview.ocr_confidence * 100)}% ({selectedDocForPreview.ocr_status})
+                    {selectedDocForPreview.text_read ? `${Math.round(selectedDocForPreview.ocr_confidence * 100)}% (${selectedDocForPreview.ocr_status})` : 'Filename detection only — document text has not been read yet.'}
                   </span>
                 </div>
               </div>
 
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-xs space-y-3">
-                <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Upload Truthful Status</h4>
+                <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Document Storage Status</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'Metadata only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text Reading</span>{selectedDocForPreview.text_read ? 'Text read' : selectedDocForPreview.ocr_status === 'Low Confidence' ? 'Needs review' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Document Text</span>{selectedDocForPreview.text_read ? 'Text read' : selectedDocForPreview.ocr_status === 'Low Confidence' ? 'Needs review' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{transactions.some(t => t.source_document_id === selectedDocForPreview.id) ? (selectedDocForPreview.transactions_extracted ? 'Transactions found' : 'Imported manually') : 'Not extracted yet'}</div>
                 </div>
                 {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">Source file unavailable in this browser.</p>
                 )}
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <button type="button" disabled={!previewFileAvailable} onClick={() => previewFileUrl ? undefined : alert('Original source file is not available in this browser.')} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> View File</button>
+                  <a href="#source-file-preview" onClick={() => { if (!previewFileAvailable) alert('Original source file is not available in this browser.'); }} className={`bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1 ${!previewFileAvailable ? 'opacity-50 cursor-not-allowed' : ''}`}><Eye className="h-3.5 w-3.5" /> View File</a>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
                 </div>
@@ -1512,7 +1500,6 @@ export default function DocumentsView({
                   </span>
                 </div>
                 
-                {/* Visual rendering of a mock PDF/CSV document */}
                 <div className="bg-slate-950 rounded-lg p-5 border border-slate-850 font-mono text-[10px] text-slate-405 space-y-3 select-text max-h-[160px] overflow-y-auto">
                   <p className="text-white font-bold text-center border-b border-slate-900 pb-1 uppercase text-xs">
                     {selectedDocForPreview.institution_name || 'Generic Bank Corp'}
@@ -1525,7 +1512,7 @@ export default function DocumentsView({
                   <div className="text-slate-300 leading-relaxed text-[10px] space-y-1">
                     [EXTRACTED TEXT PREVIEW]
                     <br />
-                    Preview appears here for supported locally stored files. Unsupported files can still be downloaded.
+                    Use Source File Preview below to view supported locally stored files. Unsupported files can still be downloaded.
                     <br />
                     File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
                     <br />
@@ -1536,18 +1523,24 @@ export default function DocumentsView({
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
+              <div id="source-file-preview" className="bg-white border border-slate-200 rounded-xl p-4 space-y-3 shadow-2xs">
                 <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5">📎 Source File Preview</h4>
+                {previewError && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg font-semibold">{previewError}</div>
+                )}
                 {!previewFileUrl ? (
-                  <div className="p-4 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg text-xs">Preview not available yet, but original file may be unavailable or still loading.</div>
+                  <div className="p-4 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg text-xs">Preview unavailable in this browser. The original file is still stored and can be downloaded.</div>
                 ) : (selectedDocForPreview.mime_type?.includes('pdf') ? (
-                  <iframe src={previewFileUrl} title="PDF source preview" className="w-full h-96 rounded border border-slate-200" />
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">If the PDF does not display here, use Download Original.</p>
+                    <iframe src={previewFileUrl} title="PDF source preview" className="w-full h-96 rounded border border-slate-200" />
+                  </div>
                 ) : selectedDocForPreview.mime_type?.startsWith('image/') ? (
-                  <img src={previewFileUrl} alt="Source file preview" className="max-h-96 rounded border border-slate-200 mx-auto" />
+                  <img src={previewFileUrl} alt="Source file preview" onError={() => setPreviewError('Preview unavailable in this browser. The original file is still stored and can be downloaded.')} className="max-h-96 rounded border border-slate-200 mx-auto" />
                 ) : previewText ? (
                   <pre className="max-h-96 overflow-auto bg-slate-950 text-slate-100 rounded p-3 text-[10px] whitespace-pre-wrap">{previewText}</pre>
                 ) : (
-                  <div className="p-4 text-center text-slate-500 bg-slate-50 border border-dashed rounded-lg text-xs">Preview not available yet, but original file is stored locally. Use Download Original.</div>
+                  <div className="p-4 text-center text-slate-500 bg-slate-50 border border-dashed rounded-lg text-xs">Preview unavailable. Download original to view.</div>
                 ))}
               </div>
 
@@ -1580,7 +1573,7 @@ export default function DocumentsView({
                     </div>
                   ) : (
                     <div className="p-6 text-center text-slate-400 bg-slate-50 border border-dashed rounded-lg">
-                      No transactions have been extracted from this document yet. Use Read Document Text or Import Spreadsheet Data if you want to add transactions.
+                      No transactions have been extracted from this document yet. To add transactions, use Read Document Text or Import Spreadsheet Data.
                     </div>
                   )}
                 </div>
