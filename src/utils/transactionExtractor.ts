@@ -42,19 +42,43 @@ const parseAmount = (value: string): number => {
   return negative ? -Math.abs(parsed) : parsed;
 };
 
-const inferStatementYear = (statementPeriod?: string): string | undefined => {
-  const years = [...(statementPeriod || '').matchAll(/\b(20\d{2}|19\d{2})\b/g)].map(match => match[1]);
-  return years[0];
+const expandYear = (year: string): number => {
+  if (year.length === 2) return 2000 + Number(year);
+  return Number(year);
+};
+
+const parseStatementBounds = (statementPeriod?: string): { startMonth: number; startYear: number; endMonth: number; endYear: number } | undefined => {
+  const matches = [...(statementPeriod || '').matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g)];
+  if (matches.length < 2) return undefined;
+  const startMonth = Number(matches[0][1]);
+  const startYear = expandYear(matches[0][3]);
+  const endMonth = Number(matches[1][1]);
+  const endYear = expandYear(matches[1][3]);
+  if (!startMonth || !endMonth || !startYear || !endYear) return undefined;
+  return { startMonth, startYear, endMonth, endYear };
+};
+
+const inferYearForShortDate = (month: number, statementPeriod?: string): { year?: number; needsReview: boolean; reason?: string } => {
+  const bounds = parseStatementBounds(statementPeriod);
+  if (!bounds) return { needsReview: true, reason: 'Short date year could not be safely inferred' };
+  if (bounds.startYear === bounds.endYear) return { year: bounds.startYear, needsReview: false };
+  if (bounds.endYear === bounds.startYear + 1) {
+    if (month >= bounds.startMonth) return { year: bounds.startYear, needsReview: false };
+    if (month <= bounds.endMonth) return { year: bounds.endYear, needsReview: false };
+  }
+  return { needsReview: true, reason: 'Short date year could not be safely inferred' };
 };
 
 const normalizeTransactionDate = (rawDate: string, statementPeriod?: string): { date: string; inferredYear: boolean; needsReview: boolean; reason?: string } => {
   if (!shortDatePattern.test(rawDate)) return { date: rawDate, inferredYear: false, needsReview: false };
-  const year = inferStatementYear(statementPeriod);
-  if (!year) {
-    return { date: rawDate, inferredYear: false, needsReview: true, reason: 'missing transaction year' };
+  const [rawMonth, rawDay] = rawDate.split('/');
+  const inferred = inferYearForShortDate(Number(rawMonth), statementPeriod);
+  if (!inferred.year) {
+    return { date: rawDate, inferredYear: false, needsReview: true, reason: inferred.reason || 'Short date year could not be safely inferred' };
   }
-  const [month, day] = rawDate.split('/').map(part => part.padStart(2, '0'));
-  return { date: `${year}-${month}-${day}`, inferredYear: true, needsReview: false };
+  const month = rawMonth.padStart(2, '0');
+  const day = rawDay.padStart(2, '0');
+  return { date: `${inferred.year}-${month}-${day}`, inferredYear: true, needsReview: false };
 };
 
 const cleanMerchant = (description: string): string => description

@@ -1268,8 +1268,10 @@ export default function App() {
               {activeTab === 'review-queue' && (
                 <ReviewCorrectionsQueue
                   reconciliationItems={reconItems}
+                  documents={documents}
                   onResolveItem={handleResolveReconItem}
                   onUpdateCategory={handleUpdateCategory}
+                  onViewDocument={() => setActiveTab('documents')}
                 />
               )}
 
