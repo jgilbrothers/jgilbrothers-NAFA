@@ -59,7 +59,17 @@ export interface DocumentRecord {
   source_file_status?: 'stored' | 'unavailable' | 'metadata_only';
   type_detected?: boolean;
   text_read?: boolean;
+  text_read_at?: string;
+  extracted_text_available?: boolean;
+  extracted_text_preview?: string;
+  extracted_text_id?: string;
+  page_count?: number;
+  text_extraction_status?: 'not_started' | 'extracting' | 'succeeded' | 'failed' | 'needs_review';
+  text_extraction_error?: string;
   transactions_extracted?: boolean;
+  transaction_candidate_count?: number;
+  confirmed_transaction_count?: number;
+  needs_review_transaction_count?: number;
 }
 
 export interface LinkedVerificationPayload {

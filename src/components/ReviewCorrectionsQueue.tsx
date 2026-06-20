@@ -10,19 +10,23 @@ import {
   UserCheck,
   Ban
 } from 'lucide-react';
-import { Transaction } from '../types';
+import { DocumentRecord, Transaction } from '../types';
 import { ReconciliationItem } from '../utils/dataEngine';
 
 interface ReviewCorrectionsQueueProps {
   reconciliationItems: ReconciliationItem[];
+  documents?: DocumentRecord[];
   onResolveItem: (id: string, newStatus: ReconciliationItem['status']) => void;
   onUpdateCategory: (txId: string, category: string) => void;
+  onViewDocument?: (documentId: string) => void;
 }
 
 export default function ReviewCorrectionsQueue({
   reconciliationItems,
+  documents = [],
   onResolveItem,
-  onUpdateCategory
+  onUpdateCategory,
+  onViewDocument
 }: ReviewCorrectionsQueueProps) {
 
   // Group items by type for user scannability
@@ -62,6 +66,37 @@ export default function ReviewCorrectionsQueue({
               <div className="divide-y divide-slate-100">
                 {ocrItems.map((item) => {
                   const tx = item.transactionA;
+                  const linkedDocument = item.documentId ? documents.find(doc => doc.id === item.documentId) : undefined;
+
+                  if (!tx && item.documentId) {
+                    return (
+                      <div key={item.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-4">
+                        <div className="space-y-1 my-0.5 max-w-2xl">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="bg-amber-50 font-bold text-amber-700 font-mono text-[9px] px-1 rounded uppercase">{item.severity} severity</span>
+                            <span className="bg-slate-100 text-slate-500 text-[9px] font-mono font-semibold px-1 py-0.5 rounded">Status: {item.status}</span>
+                            <span className="bg-slate-100 text-slate-500 text-[9px] font-mono font-semibold px-1 py-0.5 rounded">Document: {linkedDocument?.filename || item.documentId}</span>
+                          </div>
+                          <p className="font-bold text-slate-900">{item.title}</p>
+                          <p className="text-[11px] text-slate-600 leading-normal">{item.description}</p>
+                        </div>
+                        <div className="flex gap-2.5 w-full sm:w-auto justify-end">
+                          {onViewDocument && (
+                            <button onClick={() => onViewDocument(item.documentId!)} className="bg-white hover:bg-slate-50 text-slate-700 border font-bold text-[10px] uppercase py-1 px-3 rounded flex items-center gap-1 cursor-pointer transition-all">
+                              <ChevronRight className="h-3 w-3" /> Open Document
+                            </button>
+                          )}
+                          <button onClick={() => onResolveItem(item.id, 'Flagged')} className="bg-white hover:bg-slate-50 text-amber-700 border border-amber-200 font-bold text-[10px] uppercase py-1 px-3 rounded flex items-center gap-1 cursor-pointer transition-all">
+                            Keep in Review
+                          </button>
+                          <button onClick={() => onResolveItem(item.id, 'Resolved')} className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-1 px-3 rounded flex items-center gap-1 cursor-pointer transition-all shadow-xs">
+                            <UserCheck className="h-3 w-3" /> Mark Resolved
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   if (!tx) return null;
 
                   return (

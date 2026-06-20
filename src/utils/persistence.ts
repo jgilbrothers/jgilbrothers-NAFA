@@ -57,7 +57,7 @@ const getDefaultWorkspaceState = (name = 'New Project', note = '', jurisdiction 
 
 const sourceStatus = (documents: DocumentRecord[]): 'yes' | 'no' | 'partial' => {
   if (documents.length === 0) return 'no';
-  const stored = documents.filter(d => d.source_file_status === 'stored' || d.local_file?.stored).length;
+  const stored = documents.filter(d => d.source_file_status === 'stored' && d.local_file?.stored).length;
   if (stored === documents.length) return 'yes';
   if (stored === 0) return 'no';
   return 'partial';
@@ -83,6 +83,26 @@ export function summarizeWorkspace(id: string, state: WorkspaceState): Workspace
 
 export function validateWorkspaceBackup(parsed: any): boolean {
   return parsed && typeof parsed === 'object' && Array.isArray(parsed.accounts) && Array.isArray(parsed.documents) && Array.isArray(parsed.transactions) && Array.isArray(parsed.rules);
+}
+
+export function normalizeImportedWorkspaceState(state: WorkspaceState): WorkspaceState {
+  return {
+    ...state,
+    documents: (state.documents || []).map(doc => ({
+      ...doc,
+      source_file_status: doc.source_file_status === 'metadata_only' ? 'metadata_only' : 'unavailable',
+      local_file: doc.local_file ? { ...doc.local_file, stored: false } : { storage: 'indexeddb', stored: false },
+      text_read: false,
+      text_read_at: undefined,
+      extracted_text_available: false,
+      extracted_text_id: undefined,
+      extracted_text_preview: undefined,
+      text_extraction_status: 'not_started',
+      text_extraction_error: undefined,
+      transaction_candidate_count: 0,
+      needs_review_transaction_count: 0,
+    })),
+  };
 }
 
 export function getWorkspaceStateById(id: string): WorkspaceState | null {
