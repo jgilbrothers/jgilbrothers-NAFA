@@ -92,6 +92,15 @@ export function normalizeImportedWorkspaceState(state: WorkspaceState): Workspac
       ...doc,
       source_file_status: doc.source_file_status === 'metadata_only' ? 'metadata_only' : 'unavailable',
       local_file: doc.local_file ? { ...doc.local_file, stored: false } : { storage: 'indexeddb', stored: false },
+      text_read: false,
+      text_read_at: undefined,
+      extracted_text_available: false,
+      extracted_text_id: undefined,
+      extracted_text_preview: undefined,
+      text_extraction_status: 'not_started',
+      text_extraction_error: undefined,
+      transaction_candidate_count: 0,
+      needs_review_transaction_count: 0,
     })),
   };
 }

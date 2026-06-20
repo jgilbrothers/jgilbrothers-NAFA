@@ -691,7 +691,7 @@ export default function DocumentsView({
       if (result.error) setErrorNotification(result.error);
       else setSuccessNotification(`Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.`);
     } catch (err: any) {
-      const message = `${err?.message || 'Text extraction failed'} OCR will be needed for this document in a later phase.`;
+      const message = `${err?.message || 'Text extraction failed'} This PDF may contain compressed or image-based text that the local lightweight reader cannot extract yet. OCR or an improved PDF reader will be needed in a later phase.`;
       const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'Failed', ocr_confidence: 0, processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
@@ -708,7 +708,12 @@ export default function DocumentsView({
       setErrorNotification('Read PDF text before extracting transactions.');
       return;
     }
-    const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts);
+    const selectedAccount = accounts.find(a => a.id === doc.account_id);
+    const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
+      documentType: doc.file_type,
+      accountType: selectedAccount?.account_type,
+      sourcePagesApproximate: true,
+    });
     setTransactionCandidates(candidates);
     setReviewRowsOpen(true);
     const needsReview = candidates.filter(c => c.needsReview).length;
@@ -1666,10 +1671,10 @@ Files are stored in this browser’s local storage for this device and website. 
                     <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider">Review Extracted Transactions</h4>
                     <button type="button" onClick={() => importConfirmedCandidates(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 text-[10px] font-bold uppercase">Import Confirmed Transactions</button>
                   </div>
-                  <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals.</div>
+                  <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals. Source page numbers are approximate with the lightweight local reader.</div>
                   <div className="max-h-72 overflow-auto">
-                    <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
-                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
+                    <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
+                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td>{c.sourcePageApproximate ? 'Page approx.' : c.sourcePage ? `Page ${c.sourcePage}` : 'Line only'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
                     </tbody></table>
                   </div>
                 </div>

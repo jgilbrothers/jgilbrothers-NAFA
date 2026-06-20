@@ -14,7 +14,7 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 const openDb = (): Promise<IDBDatabase> => {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     if (!('indexedDB' in window)) {
       dbPromise = null;
       reject(new Error('IndexedDB is not available for extracted text storage.'));
@@ -25,11 +25,27 @@ const openDb = (): Promise<IDBDatabase> => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'documentId' });
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onclose = () => { dbPromise = null; };
+      db.onerror = () => { dbPromise = null; };
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     request.onerror = () => {
       dbPromise = null;
       reject(request.error || new Error('Unable to open extracted text storage.'));
     };
+    request.onblocked = () => {
+      dbPromise = null;
+      reject(new Error('Extracted text storage is blocked by another browser tab. Close other NAFA Ledger tabs and try again.'));
+    };
+  }).catch(err => {
+    dbPromise = null;
+    throw err;
   });
   return dbPromise;
 };

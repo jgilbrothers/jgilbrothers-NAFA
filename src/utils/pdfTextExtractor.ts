@@ -24,6 +24,8 @@ const cleanText = (value: string): string => value
   .replace(/\n{3,}/g, '\n\n')
   .trim();
 
+// Lightweight extraction scans PDF text fragments and does not provide court-ready page mapping.
+// Per-page text is an approximate split unless a future full PDF reader is added.
 export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResult> {
   try {
     const buffer = await blob.arrayBuffer();
@@ -46,7 +48,7 @@ export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResul
 
     const text = cleanText(fragments.join('\n'));
     if (text.length < 20) {
-      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', error: 'NAFA Ledger could not find readable text in this PDF. This may be a scanned/image-based document. OCR will be needed in a later phase.' };
+      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', error: 'NAFA Ledger could not find readable text in this PDF. This PDF may contain compressed or image-based text that the local lightweight reader cannot extract yet. OCR or an improved PDF reader will be needed in a later phase.' };
     }
     const perPageSize = Math.ceil(text.length / pageCount);
     const pageTexts = Array.from({ length: pageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize));

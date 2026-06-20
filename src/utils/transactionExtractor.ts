@@ -1,3 +1,5 @@
+import { DocumentRecord } from '../types';
+
 export interface TransactionCandidate {
   id: string;
   documentId: string;
@@ -9,6 +11,7 @@ export interface TransactionCandidate {
   transactionType: 'debit' | 'credit' | 'unknown';
   runningBalance?: number;
   sourcePage?: number;
+  sourcePageApproximate?: boolean;
   sourceLine?: number;
   confidenceScore: number;
   needsReview: boolean;
@@ -17,11 +20,18 @@ export interface TransactionCandidate {
   note?: string;
 }
 
+export interface TransactionExtractionContext {
+  documentType?: DocumentRecord['file_type'];
+  accountType?: 'checking' | 'savings' | 'credit_card' | 'loan' | 'mortgage' | 'investment';
+  sourcePagesApproximate?: boolean;
+}
+
 const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?|[-+]?\$?\(?\d+\.\d{2}\)?)/g;
 const datePattern = /\b(?:\d{1,2}[\/]\d{1,2}(?:[\/]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
 const balanceWords = /\b(balance|available|previous|ending|beginning|total|summary|minimum payment|interest charged)\b/i;
-const creditWords = /\b(payment|deposit|credit|refund|payroll|direct dep|interest paid)\b/i;
-const debitWords = /\b(debit|withdrawal|purchase|ach|pos|atm|check|fee|payment to)\b/i;
+const debitClues = /\b(payment to|online payment to|ach payment to|bill pay|payment sent|debit card payment|pos|purchase|withdrawal|debit|atm|check|fee)\b/i;
+const creditClues = /\b(payment received|deposit|direct deposit|payroll|refund|credit|reversal|cashback|interest paid)\b/i;
+const genericPayment = /\bpayment\b/i;
 
 const parseAmount = (value: string): number => {
   const trimmed = value.trim();
@@ -38,7 +48,34 @@ const cleanMerchant = (description: string): string => description
   .slice(0, 6)
   .join(' ') || 'Merchant unclear';
 
-export function extractTransactionCandidates(text: string, documentId: string, pageTexts?: string[]): TransactionCandidate[] {
+const inferTransactionType = (
+  line: string,
+  amount: number,
+  context?: TransactionExtractionContext
+): { type: TransactionCandidate['transactionType']; reason?: string } => {
+  const isCheckingLike = context?.accountType === 'checking' || context?.accountType === 'savings' || context?.documentType === 'Checking Statement' || context?.documentType === 'Savings Statement';
+  const isCreditCard = context?.accountType === 'credit_card' || context?.documentType === 'Credit Card Statement';
+  const hasDebitClue = debitClues.test(line);
+  const hasCreditClue = creditClues.test(line);
+  const hasGenericPayment = genericPayment.test(line);
+
+  if (amount < 0 && !hasDebitClue) return { type: 'credit' };
+  if (hasDebitClue) return { type: 'debit' };
+  if (hasCreditClue) return { type: 'credit' };
+  if (isCreditCard && hasGenericPayment) return { type: 'credit' };
+  if (isCheckingLike && hasGenericPayment) return { type: 'debit' };
+  if (hasGenericPayment) return { type: 'unknown', reason: 'ambiguous payment direction' };
+  if (isCheckingLike && amount > 0) return { type: 'debit' };
+  if (isCreditCard && amount > 0) return { type: 'debit' };
+  return { type: 'unknown', reason: 'unclear debit/credit direction' };
+};
+
+export function extractTransactionCandidates(
+  text: string,
+  documentId: string,
+  pageTexts?: string[],
+  context?: TransactionExtractionContext
+): TransactionCandidate[] {
   const pages = pageTexts?.length ? pageTexts : [text];
   const candidates: TransactionCandidate[] = [];
 
@@ -57,20 +94,16 @@ export function extractTransactionCandidates(text: string, documentId: string, p
       amountMatches.forEach(amountText => { description = description.replace(amountText, ' '); });
       description = description.replace(/\s+/g, ' ').trim();
 
-      let type: TransactionCandidate['transactionType'] = 'unknown';
-      const lower = clean.toLowerCase();
-      if (creditWords.test(lower) || amount < 0) type = 'credit';
-      if (debitWords.test(lower) && !creditWords.test(lower)) type = 'debit';
-      if (type === 'unknown' && amount > 0) type = 'debit';
-
+      const direction = inferTransactionType(clean, amount, context);
       const reviewReasons: string[] = [];
       if (isBalanceLine) reviewReasons.push('balance line detected but not transaction');
       if (!description || description.length < 3) reviewReasons.push('merchant unclear');
       if (!dateMatch[0]) reviewReasons.push('unclear date');
       if (!Number.isFinite(amount) || amount === 0) reviewReasons.push('unclear amount');
-      if (type === 'unknown') reviewReasons.push('unclear debit/credit direction');
+      if (direction.reason) reviewReasons.push(direction.reason);
+      if (amountMatches.length > 2) reviewReasons.push('statement format not recognized');
 
-      const needsReview = reviewReasons.length > 0 || amountMatches.length > 2;
+      const needsReview = reviewReasons.length > 0 || direction.type === 'unknown';
       candidates.push({
         id: `CAND-${documentId}-${pageIndex + 1}-${lineIndex + 1}`,
         documentId,
@@ -78,9 +111,10 @@ export function extractTransactionCandidates(text: string, documentId: string, p
         rawDescription: description || clean,
         cleanMerchantName: cleanMerchant(description),
         amount: Math.abs(amount),
-        transactionType: type,
+        transactionType: direction.type,
         runningBalance,
-        sourcePage: pageIndex + 1,
+        sourcePage: context?.sourcePagesApproximate ? undefined : pageIndex + 1,
+        sourcePageApproximate: Boolean(context?.sourcePagesApproximate),
         sourceLine: lineIndex + 1,
         confidenceScore: needsReview ? 0.55 : 0.86,
         needsReview,
