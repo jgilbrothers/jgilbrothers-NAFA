@@ -148,6 +148,31 @@ export function getWorkspaceSummaries(): WorkspaceSummary[] {
     const parsed = raw ? JSON.parse(raw) : [];
     if (Array.isArray(parsed) && parsed.length > 0) return parsed.map((w: any) => ({ documentCount: 0, accountCount: 0, transactionCount: 0, reviewItemCount: 0, sourceFileStatus: 'no', ...w }));
   } catch (err) { console.warn('Unable to read workspace index:', err); }
+
+  try {
+    const legacyRaw = localStorage.getItem(STORAGE_KEY);
+    if (!legacyRaw) return [];
+    const legacyState = JSON.parse(legacyRaw);
+    if (!validateWorkspaceBackup(legacyState)) return [];
+    const id = getActiveWorkspaceId();
+    const profileName = legacyState.profile?.workspaceName || legacyState.profile?.caseProjectName || 'Local Workspace';
+    const migratedState: WorkspaceState = {
+      ...legacyState,
+      profile: {
+        ...(legacyState.profile || getDefaultWorkspaceState(profileName).profile!),
+        workspaceName: profileName,
+        caseProjectName: legacyState.profile?.caseProjectName || profileName,
+        jurisdiction: legacyState.profile?.jurisdiction || legacyState.jurisdiction || 'North Carolina',
+        county: legacyState.profile?.county || 'Durham County',
+        lastOpenedAt: legacyState.profile?.lastOpenedAt || new Date().toISOString(),
+      },
+    };
+    const summary = summarizeWorkspace(id, migratedState);
+    localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify([summary]));
+    return [summary];
+  } catch (err) {
+    console.warn('Unable to migrate legacy workspace summary:', err);
+  }
   return [];
 }
 

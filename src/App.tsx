@@ -714,6 +714,26 @@ export default function App() {
     </div>
   );
 
+  // Filters audit footer lists
+  const filteredAuditsList = useMemo(() => {
+    if (activeAuditLevel === 'all') return auditLogs;
+    return auditLogs.filter(log => log.level === activeAuditLevel);
+  }, [auditLogs, activeAuditLevel]);
+
+
+  const handleOpenImportedProject = async () => {
+    if (!pendingImportState) return;
+    const success = await handleImportBackup(pendingImportState);
+    if (success) {
+      setHasOpenedProject(true);
+      setStartupMode('home');
+      setPendingImportState(null);
+      setImportValidationError('');
+    } else {
+      setImportValidationError('Project import failed. The backup was not opened and no current project was overwritten.');
+    }
+  };
+
   if (!hasOpenedProject) {
     const lastSummary = workspaceSummaries.find(w => w.id === activeWorkspaceId) || workspaceSummaries[0];
     const pendingSummary = pendingImportState ? summarizeWorkspace('pending-import', pendingImportState) : null;
@@ -733,17 +753,11 @@ export default function App() {
           <div className="bg-indigo-950 text-indigo-100 rounded-2xl p-5 text-sm leading-relaxed">NAFA Ledger saves working projects in this browser on this device. For long-term storage or moving between devices, export a project backup/archive and keep your original source files backed up separately.<span className="block mt-2 font-bold">For large projects with years of statements, laptop or desktop use is recommended.</span></div>
           {startupMode === 'new' && <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"><h2 className="font-black text-lg">Start New Project</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-3"><input value={newProjectName} onChange={e => setNewProjectName(e.target.value)} placeholder="Project name" className="border rounded-lg p-3"/><input value={newProjectJurisdiction} onChange={e => setNewProjectJurisdiction(e.target.value)} placeholder="Jurisdiction" className="border rounded-lg p-3"/><input value={newProjectCounty} onChange={e => setNewProjectCounty(e.target.value)} placeholder="County" className="border rounded-lg p-3"/><textarea value={newProjectNote} onChange={e => setNewProjectNote(e.target.value)} placeholder="Optional project note/summary" className="border rounded-lg p-3 md:col-span-2"/></div><button onClick={handleStartupNewProject} className="bg-emerald-500 text-slate-950 font-black px-5 py-3 rounded-xl">Create Blank Project</button></div>}
           {startupMode === 'continue' && lastSummary && <ProjectSummaryCard summary={lastSummary} actionLabel="Continue Project" onAction={() => openProjectById(selectedStartupProjectId || lastSummary.id)} />}
-          {startupMode === 'open' && <div className="space-y-4"><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{workspaceSummaries.map(ws => <ProjectSummaryCard key={ws.id} summary={ws} actionLabel="Open Project" onAction={() => openProjectById(ws.id)} />)}</div><div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"><h2 className="font-black text-lg">Import Project Backup</h2><label className="inline-flex items-center gap-2 bg-slate-950 text-white font-bold px-4 py-3 rounded-xl cursor-pointer"><Upload className="h-4 w-4" /> Choose backup JSON<input type="file" accept=".json,.nafa,.backup" onChange={handleStartupImportFile} className="hidden" /></label>{importValidationError && <p className="text-sm text-rose-700 font-bold">{importValidationError}</p>}{pendingSummary && <ProjectSummaryCard summary={pendingSummary} actionLabel="Open Project" onAction={() => void handleImportBackup(pendingImportState)} />}</div></div>}
+          {startupMode === 'open' && <div className="space-y-4"><div className="grid grid-cols-1 md:grid-cols-2 gap-3">{workspaceSummaries.map(ws => <ProjectSummaryCard key={ws.id} summary={ws} actionLabel="Open Project" onAction={() => openProjectById(ws.id)} />)}</div><div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-3"><h2 className="font-black text-lg">Import Project Backup</h2><label className="inline-flex items-center gap-2 bg-slate-950 text-white font-bold px-4 py-3 rounded-xl cursor-pointer"><Upload className="h-4 w-4" /> Choose backup JSON<input type="file" accept=".json,.nafa,.backup" onChange={handleStartupImportFile} className="hidden" /></label>{importValidationError && <p className="text-sm text-rose-700 font-bold">{importValidationError}</p>}{pendingSummary && <ProjectSummaryCard summary={pendingSummary} actionLabel="Open Project" onAction={() => void handleOpenImportedProject()} />}</div></div>}
         </div>
       </div>
     );
   }
-
-  // Filters audit footer lists
-  const filteredAuditsList = useMemo(() => {
-    if (activeAuditLevel === 'all') return auditLogs;
-    return auditLogs.filter(log => log.level === activeAuditLevel);
-  }, [auditLogs, activeAuditLevel]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-850 font-sans flex flex-col justify-between select-none" id="nafa-ledger-root-container">
@@ -804,9 +818,18 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button onClick={() => setStartupMode('new') || setHasOpenedProject(false)} className="text-[9px] bg-emerald-500 text-slate-950 font-bold px-2 py-1 rounded uppercase">New Project</button>
-          <button onClick={() => setStartupMode('open') || setHasOpenedProject(false)} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Switch Project</button>
-          <button onClick={() => setStartupMode('open') || setHasOpenedProject(false)} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Open Existing Project</button>
+          <button onClick={() => {
+            setStartupMode('new');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-emerald-500 text-slate-950 font-bold px-2 py-1 rounded uppercase">New Project</button>
+          <button onClick={() => {
+            setStartupMode('open');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Switch Project</button>
+          <button onClick={() => {
+            setStartupMode('open');
+            setHasOpenedProject(false);
+          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Open Existing Project</button>
           <button onClick={handleExportBackup} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase flex items-center gap-1"><Download className="h-3 w-3" /> Export Project</button>
           {/* Desktop shortcut tip */}
           <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded flex items-center gap-1.5">
