@@ -31,7 +31,14 @@ interface SettingsViewProps {
   workspaceSummaries: WorkspaceSummary[];
   onCreateWorkspace: (name: string) => void;
   onSwitchWorkspace: (id: string) => void;
-  onRenameWorkspace: (name: string) => void;
+  onRenameWorkspace: (name: string, updates?: any) => void;
+  projectNote: string;
+  ownerName: string;
+  county: string;
+  documentCount: number;
+  transactionCount: number;
+  accountCount: number;
+  reviewItemCount: number;
 }
 
 const formatBytes = (bytes: number) => {
@@ -54,7 +61,14 @@ export default function SettingsView({
   workspaceSummaries,
   onCreateWorkspace,
   onSwitchWorkspace,
-  onRenameWorkspace
+  onRenameWorkspace,
+  projectNote,
+  ownerName,
+  county,
+  documentCount,
+  transactionCount,
+  accountCount,
+  reviewItemCount
 }: SettingsViewProps) {
   const [maskSuff, setMaskSuff] = useState(true);
   const [deepScan, setDeepScan] = useState(false);
@@ -67,6 +81,9 @@ export default function SettingsView({
   const [fileStats, setFileStats] = useState({ count: 0, bytes: 0 });
   const [fileStorageError, setFileStorageError] = useState('');
   const [workspaceNameInput, setWorkspaceNameInput] = useState(workspaceName);
+  const [projectNoteInput, setProjectNoteInput] = useState(projectNote);
+  const [ownerNameInput, setOwnerNameInput] = useState(ownerName);
+  const [countyInput, setCountyInput] = useState(county);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
   const isMounted = useRef(true);
 
@@ -93,7 +110,10 @@ export default function SettingsView({
 
   useEffect(() => {
     setWorkspaceNameInput(workspaceName);
-  }, [workspaceName]);
+    setProjectNoteInput(projectNote);
+    setOwnerNameInput(ownerName);
+    setCountyInput(county);
+  }, [workspaceName, projectNote, ownerName, county]);
 
   const handleClearStoredFilesOnly = async () => {
     if (!confirm('Clear stored source files for the current workspace only? Document metadata will remain, but original files for this workspace will be marked unavailable in this browser.')) return;
@@ -309,8 +329,20 @@ export default function SettingsView({
                 </select>
               </div>
             </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-mono">
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Documents</span><strong>{documentCount}</strong></div>
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Transactions</span><strong>{transactionCount}</strong></div>
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Account folders</span><strong>{accountCount}</strong></div>
+              <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Review items</span><strong>{reviewItemCount}</strong></div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Owner/Profile Name</label><input value={ownerNameInput} onChange={e => setOwnerNameInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden" /></div>
+              <div><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">County</label><input value={countyInput} onChange={e => setCountyInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden" /></div>
+              <div className="md:col-span-2"><label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Project Note / Summary</label><textarea value={projectNoteInput} onChange={e => setProjectNoteInput(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-semibold outline-hidden" placeholder="Short project summary" /></div>
+            </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => onRenameWorkspace(workspaceNameInput)} className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Rename Workspace</button>
+              <button type="button" onClick={() => onRenameWorkspace(workspaceNameInput, { projectNote: projectNoteInput, userDisplayName: ownerNameInput || 'Local User', county: countyInput, jurisdiction })} className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Save Project Details</button>
               <input value={newWorkspaceName} onChange={e => setNewWorkspaceName(e.target.value)} placeholder="New workspace name" className="bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-950 outline-hidden" />
               <button type="button" onClick={() => { onCreateWorkspace(newWorkspaceName || 'New Workspace'); setNewWorkspaceName(''); }} className="bg-indigo-700 hover:bg-indigo-600 text-white font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Create New Workspace</button>
               <button type="button" onClick={onExportBackup} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[10px] uppercase py-2 px-3 rounded transition-all cursor-pointer">Export Current Workspace Backup</button>
@@ -373,13 +405,13 @@ export default function SettingsView({
                 onClick={onExportBackup}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
               >
-                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Workspace Archive
+                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Project Backup
               </button>
 
               {/* Local Restore Importer Trigger Button via standard browser file selector */}
               <div className="relative">
                 <label className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm">
-                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Import Workspace Archive
+                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Import Project Backup
                   <input
                     type="file"
                     accept=".json"
@@ -392,7 +424,7 @@ export default function SettingsView({
               <div className="text-[9.5px] text-slate-400 font-mono text-center pt-1 leading-normal border-t border-slate-100 mt-2">
                 ⚠️ Workspace backup contains accounts, documents, transactions, categorizations, rules, and settings. 
                 <span className="block italic text-slate-400 mt-1 font-sans">
-                  Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
+                  This backup preserves project data and metadata. Source files stored in browser storage may need to be exported separately until full archive export is available. Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
                 </span>
               </div>
 
