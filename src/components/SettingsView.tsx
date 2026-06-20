@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
   Settings, 
   MapPin, 
@@ -52,19 +52,41 @@ export default function SettingsView({
   const [showOverwriteWarning, setShowOverwriteWarning] = useState(false);
   const [pendingBackupData, setPendingBackupData] = useState<any>(null);
   const [fileStats, setFileStats] = useState({ count: 0, bytes: 0 });
+  const [fileStorageError, setFileStorageError] = useState('');
+  const isMounted = useRef(true);
 
   const refreshFileStats = async () => {
-    setFileStats(await getStoredFileStats());
+    try {
+      if (isMounted.current) setFileStorageError('');
+      const stats = await getStoredFileStats();
+      if (isMounted.current) setFileStats(stats);
+    } catch (err) {
+      console.error(err);
+      if (isMounted.current) {
+        setFileStorageError('Unable to access local file storage. Browser storage may be unavailable or full.');
+      }
+    }
   };
 
   useEffect(() => {
-    refreshFileStats().catch(console.error);
+    isMounted.current = true;
+    refreshFileStats();
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
   const handleClearStoredFilesOnly = async () => {
     if (!confirm('Clear stored source files only? Document metadata will remain, but original files will be marked unavailable in this browser.')) return;
-    await onClearStoredFilesOnly();
-    await refreshFileStats();
+    try {
+      await onClearStoredFilesOnly();
+      await refreshFileStats();
+    } catch (err) {
+      console.error(err);
+      if (isMounted.current) {
+        setFileStorageError('Unable to access local file storage. Browser storage may be unavailable or full.');
+      }
+    }
   };
 
   const handleSaveConfigs = (e: React.FormEvent) => {
@@ -370,11 +392,15 @@ export default function SettingsView({
             <p className="text-slate-500 leading-normal font-medium">
               Files are stored in this browser’s local storage for this device and website. They are not uploaded to a cloud server. Browser storage is not the same as a normal folder like Downloads. Export a workspace backup to preserve your records before clearing browser data or switching devices.
             </p>
+            {fileStorageError && (
+              <div className="bg-rose-50 text-rose-800 border border-rose-200 text-[11px] p-2 rounded-lg font-semibold">{fileStorageError}</div>
+            )}
             <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
               <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Stored files</span><strong>{fileStats.count}</strong></div>
               <div className="bg-slate-50 border border-slate-100 rounded p-2"><span className="block text-slate-400 uppercase text-[9px]">Approx. used</span><strong>{formatBytes(fileStats.bytes)}</strong></div>
             </div>
             <div className="space-y-2 border-t border-slate-100 pt-3">
+              <button type="button" onClick={refreshFileStats} className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Refresh Storage Status</button>
               <button type="button" onClick={onExportBackup} className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Export Workspace Backup</button>
               <button type="button" onClick={handleClearStoredFilesOnly} className="w-full bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer">Clear Stored Files Only</button>
             </div>

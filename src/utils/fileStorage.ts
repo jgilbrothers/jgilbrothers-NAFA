@@ -13,21 +13,47 @@ export interface StoredUploadedFile {
   blob: Blob;
 }
 
-const openFileDb = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
-  if (!('indexedDB' in window)) {
-    reject(new Error('IndexedDB is not available in this browser.'));
-    return;
-  }
-  const request = indexedDB.open(DB_NAME, DB_VERSION);
-  request.onupgradeneeded = () => {
-    const db = request.result;
-    if (!db.objectStoreNames.contains(STORE_NAME)) {
-      db.createObjectStore(STORE_NAME, { keyPath: 'documentId' });
+let fileDbPromise: Promise<IDBDatabase> | null = null;
+
+const openFileDb = (): Promise<IDBDatabase> => {
+  if (fileDbPromise) return fileDbPromise;
+
+  fileDbPromise = new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      fileDbPromise = null;
+      reject(new Error('IndexedDB is not available in this browser.'));
+      return;
     }
-  };
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error || new Error('Unable to open local file storage.'));
-});
+
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'documentId' });
+      }
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onclose = () => { fileDbPromise = null; };
+      db.onerror = () => { fileDbPromise = null; };
+      db.onversionchange = () => {
+        db.close();
+        fileDbPromise = null;
+      };
+      resolve(db);
+    };
+    request.onerror = () => {
+      fileDbPromise = null;
+      reject(request.error || new Error('Unable to open local file storage.'));
+    };
+    request.onblocked = () => {
+      fileDbPromise = null;
+      reject(new Error('Local file storage is blocked by another browser tab.'));
+    };
+  });
+
+  return fileDbPromise;
+};
 
 const withStore = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
   const db = await openFileDb();
@@ -36,9 +62,7 @@ const withStore = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectS
     const request = action(tx.objectStore(STORE_NAME));
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error || new Error('Local file storage request failed.'));
-    tx.oncomplete = () => db.close();
     tx.onerror = () => {
-      db.close();
       reject(tx.error || new Error('Local file storage transaction failed.'));
     };
   });
@@ -94,9 +118,7 @@ export async function getStoredFileStats(): Promise<{ count: number; bytes: numb
       }
     };
     request.onerror = () => reject(request.error || new Error('Unable to read local file storage stats.'));
-    tx.oncomplete = () => db.close();
     tx.onerror = () => {
-      db.close();
       reject(tx.error || new Error('Unable to read local file storage stats.'));
     };
   });
