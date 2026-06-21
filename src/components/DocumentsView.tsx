@@ -24,6 +24,14 @@ import { extractTransactionCandidates, TransactionCandidate } from '../utils/tra
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
+const DEFAULT_COLUMN_MAPPING = {
+  dateIdx: 0,
+  descIdx: 1,
+  amountIdx: 2,
+  typeIdx: 3,
+  catIdx: -1
+};
+
 interface DocumentsViewProps {
   documents: DocumentRecord[];
   accounts: AccountSummary[];
@@ -72,13 +80,7 @@ export default function DocumentsView({
   const [csvText, setCsvText] = useState('');
   const [csvParsedRows, setCsvParsedRows] = useState<string[][]>([]);
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
-  const [columnMapping, setColumnMapping] = useState({
-    dateIdx: 0,
-    descIdx: 1,
-    amountIdx: 2,
-    typeIdx: 3,
-    catIdx: -1
-  });
+  const [columnMapping, setColumnMapping] = useState(DEFAULT_COLUMN_MAPPING);
   const [csvAccount, setCsvAccount] = useState('');
   const [csvDocType, setCsvDocType] = useState<DocumentRecord['file_type']>('Checking Statement');
   const [csvInstitution, setCsvInstitution] = useState('');
@@ -510,16 +512,18 @@ export default function DocumentsView({
     return '';
   };
 
+  const hasLocallyStoredFile = (doc: DocumentRecord) => doc.source_file_status === 'stored' || doc.local_file?.stored === true;
+
   const isReadableDocument = (doc: DocumentRecord) => {
     const lower = doc.filename.toLowerCase();
     const mime = doc.mime_type || '';
-    return doc.source_file_status === 'stored' && (mime.includes('pdf') || mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.pdf') || lower.endsWith('.txt') || lower.endsWith('.csv'));
+    return hasLocallyStoredFile(doc) && (mime.includes('pdf') || mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.pdf') || lower.endsWith('.txt') || lower.endsWith('.csv'));
   };
 
   const isSpreadsheetDocument = (doc: DocumentRecord) => {
     const lower = doc.filename.toLowerCase();
     const mime = doc.mime_type || '';
-    return doc.source_file_status === 'stored' && (mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.csv') || lower.endsWith('.txt'));
+    return hasLocallyStoredFile(doc) && (mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.csv') || lower.endsWith('.txt'));
   };
 
   const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
@@ -546,6 +550,12 @@ export default function DocumentsView({
       setPdfErrorMessage('Choose an uploaded document to read.');
       return;
     }
+    setPdfParsedRows([]);
+    setPdfInstitution('');
+    setPdfPeriod('');
+    setPdfSuffix('');
+    setPdfErrorMessage('');
+    setForcePdfReview(false);
     const stored = await getUploadedFile(doc.id).catch(() => undefined);
     if (!stored?.blob || !isReadableDocument(doc)) {
       setPdfErrorMessage('This document cannot be read with the current local reader. Try Download Original, or OCR will be needed in a later phase.');
@@ -569,11 +579,21 @@ export default function DocumentsView({
   };
 
   const importSelectedSpreadsheet = async () => {
-    const doc = documents.find(d => d.id === selectedCsvDocId);
+    if (!selectedCsvDocId) {
+      setCsvErrorMessage('Please select an uploaded spreadsheet file first.');
+      return;
+    }
+    const spreadsheetDocs = documents.filter(isSpreadsheetDocument);
+    const doc = spreadsheetDocs.find(d => d.id === selectedCsvDocId);
     if (!doc) {
       setCsvErrorMessage('No uploaded spreadsheet files found. Upload a CSV or paste rows manually.');
       return;
     }
+    setCsvParsedRows([]);
+    setCsvHeaders([]);
+    setColumnMapping(DEFAULT_COLUMN_MAPPING);
+    setCsvErrorMessage('');
+    setRouteToReviewQueue(false);
     const stored = await getUploadedFile(doc.id).catch(() => undefined);
     if (!stored?.blob || !isSpreadsheetDocument(doc)) {
       setCsvErrorMessage('This document cannot be read with the current local reader. Try Download Original, or paste rows manually.');
