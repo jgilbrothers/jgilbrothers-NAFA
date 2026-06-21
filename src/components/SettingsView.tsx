@@ -116,7 +116,7 @@ export default function SettingsView({
   }, [workspaceName, projectNote, ownerName, county]);
 
   const handleClearStoredFilesOnly = async () => {
-    if (!confirm('Clear stored source files for the current workspace only? Document metadata will remain, but original files for this workspace will be marked unavailable in this browser.')) return;
+    if (!confirm('Clear stored source files for the current workspace only? Document information will remain, but original files for this workspace will be marked unavailable in this browser.')) return;
     try {
       await onClearStoredFilesOnly();
       await refreshFileStats();
@@ -316,7 +316,7 @@ export default function SettingsView({
             <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
               <Database className="h-4 w-4 text-slate-400" /> Workspace Management
             </h5>
-            <p className="text-xs text-slate-500 leading-normal">Workspace data is stored only in this browser. Each workspace keeps its own profile, documents metadata, accounts, transactions, rules, audit logs, and chat history. Stored source file blobs remain associated by document ID.</p>
+            <p className="text-xs text-slate-500 leading-normal">Workspace data is stored only in this browser. Each workspace keeps its own profile, document information, accounts, transactions, rules, audit logs, and chat history. Stored source file blobs remain associated by document ID.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Current Workspace Name</label>
@@ -424,7 +424,7 @@ export default function SettingsView({
               <div className="text-[9.5px] text-slate-400 font-mono text-center pt-1 leading-normal border-t border-slate-100 mt-2">
                 ⚠️ Workspace backup contains accounts, documents, transactions, categorizations, rules, and settings. 
                 <span className="block italic text-slate-400 mt-1 font-sans">
-                  This backup preserves project data and metadata. Source files stored in browser storage may need to be exported separately until full archive export is available. Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
+                  This backup preserves project data and document information. Source files stored in browser storage may need to be exported separately until full archive export is available. Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
                 </span>
               </div>
 

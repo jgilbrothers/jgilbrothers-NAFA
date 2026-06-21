@@ -86,6 +86,7 @@ export default function DocumentsView({
   const [routeToReviewQueue, setRouteToReviewQueue] = useState(false);
   const [isCsvPanelOpen, setIsCsvPanelOpen] = useState(false);
   const [csvErrorMessage, setCsvErrorMessage] = useState('');
+  const [selectedCsvDocId, setSelectedCsvDocId] = useState('');
 
   // Structured PDF Smart Heuristics states
   const [pdfText, setPdfText] = useState('');
@@ -104,12 +105,13 @@ export default function DocumentsView({
   const [pdfDocType, setPdfDocType] = useState<DocumentRecord['file_type']>('Checking Statement');
   const [isPdfPanelOpen, setIsPdfPanelOpen] = useState(false);
   const [pdfErrorMessage, setPdfErrorMessage] = useState('');
+  const [selectedReadableDocId, setSelectedReadableDocId] = useState('');
   const [forcePdfReview, setForcePdfReview] = useState(false);
 
   // Intelligent Text-based PDF Structured Heuristics Reader
   const handleParsePdf = () => {
     if (!pdfText.trim()) {
-      setPdfErrorMessage('Paste copied document text first.');
+      setPdfErrorMessage('Choose an uploaded document first, or use Advanced: Paste Text Manually if automatic reading does not work.');
       return;
     }
 
@@ -335,7 +337,7 @@ export default function DocumentsView({
 
   const handleParseCsv = () => {
     if (!csvText.trim()) {
-      setCsvErrorMessage('Paste spreadsheet transaction rows first.');
+      setCsvErrorMessage('Choose an uploaded spreadsheet file first, or use Advanced: Paste Spreadsheet Rows.');
       return;
     }
     try {
@@ -498,12 +500,98 @@ export default function DocumentsView({
     return 'Unknown / Needs Review';
   };
 
+
+  const inferStatementPeriodFromFilename = (name: string): string => {
+    const base = name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+    const monthYear = base.match(/(?:^|\s)(0?[1-9]|1[0-2])[-_\s](20\d{2})(?:\s|$)/);
+    if (monthYear) return `${monthYear[1].padStart(2, '0')}/${monthYear[2]} — Suggested from filename`;
+    const shortYear = base.match(/(?:^|\s)(0?[1-9]|1[0-2])[-_\s](\d{2})(?:\s|$)/);
+    if (shortYear) return `${shortYear[1].padStart(2, '0')}/20${shortYear[2]} — Suggested from filename`;
+    return '';
+  };
+
+  const isReadableDocument = (doc: DocumentRecord) => {
+    const lower = doc.filename.toLowerCase();
+    const mime = doc.mime_type || '';
+    return doc.source_file_status === 'stored' && (mime.includes('pdf') || mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.pdf') || lower.endsWith('.txt') || lower.endsWith('.csv'));
+  };
+
+  const isSpreadsheetDocument = (doc: DocumentRecord) => {
+    const lower = doc.filename.toLowerCase();
+    const mime = doc.mime_type || '';
+    return doc.source_file_status === 'stored' && (mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.csv') || lower.endsWith('.txt'));
+  };
+
+  const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
+    const labels = [doc.source_file_status === 'stored' ? 'File Stored' : 'File Not Stored'];
+    if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') labels.push('OCR Needed');
+    else labels.push(doc.text_read || doc.extracted_text_available ? 'Text Read' : 'Text Not Read');
+    if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) labels.push('Transactions Imported');
+    else if ((doc.transaction_candidate_count || 0) > 0 || (doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions Need Review');
+    else labels.push('Transactions Not Extracted');
+    return labels;
+  };
+
+  const getTransactionStatusExplanation = (doc: DocumentRecord, rowCount: number) => {
+    if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) return 'Imported — confirmed transactions are in the ledger.';
+    if ((doc.transaction_candidate_count || 0) > 0 || (doc.needs_review_transaction_count || 0) > 0) return 'Candidates found — review before importing.';
+    if (doc.extracted_text_available || doc.text_read) return 'Ready to extract — document text is available.';
+    if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') return doc.text_extraction_error?.toLowerCase().includes('image') || doc.text_extraction_error?.toLowerCase().includes('compressed') ? 'OCR needed — this PDF appears image-based or compressed.' : 'Not extracted — local reader could not find readable text.';
+    return 'Not extracted yet — document text has not been read.';
+  };
+
+  const readSelectedDocumentText = async () => {
+    const doc = documents.find(d => d.id === selectedReadableDocId);
+    if (!doc) {
+      setPdfErrorMessage('Choose an uploaded document to read.');
+      return;
+    }
+    const stored = await getUploadedFile(doc.id).catch(() => undefined);
+    if (!stored?.blob || !isReadableDocument(doc)) {
+      setPdfErrorMessage('This document cannot be read with the current local reader. Try Download Original, or OCR will be needed in a later phase.');
+      return;
+    }
+    const mime = stored.mimeType || doc.mime_type || '';
+    if (mime.includes('pdf') || doc.filename.toLowerCase().endsWith('.pdf')) {
+      await readPdfTextFromStoredFile(doc);
+      const saved = await getExtractedText(doc.id).catch(() => undefined);
+      if (saved?.text) setPdfText(saved.text);
+      return;
+    }
+    if (mime.startsWith('text/') || mime.includes('csv') || doc.filename.toLowerCase().endsWith('.txt') || doc.filename.toLowerCase().endsWith('.csv')) {
+      const text = await stored.blob.text();
+      setPdfText(text);
+      setPdfErrorMessage('');
+      setSuccessNotification(`Loaded text from ${doc.filename}.`);
+      return;
+    }
+    setPdfErrorMessage('This document cannot be read with the current local reader. Try Download Original, or OCR will be needed in a later phase.');
+  };
+
+  const importSelectedSpreadsheet = async () => {
+    const doc = documents.find(d => d.id === selectedCsvDocId);
+    if (!doc) {
+      setCsvErrorMessage('No uploaded spreadsheet files found. Upload a CSV or paste rows manually.');
+      return;
+    }
+    const stored = await getUploadedFile(doc.id).catch(() => undefined);
+    if (!stored?.blob || !isSpreadsheetDocument(doc)) {
+      setCsvErrorMessage('This document cannot be read with the current local reader. Try Download Original, or paste rows manually.');
+      return;
+    }
+    const text = await stored.blob.text();
+    setCsvText(text);
+    setCsvErrorMessage('');
+    setSuccessNotification(`Loaded spreadsheet rows from ${doc.filename}.`);
+  };
+
   const handleSourceFileUpload = async (file: File) => {
     setIsUploading(true);
     const docId = `DOC-FILE-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const detectedType = detectDocumentType(file.name);
     const detectedInstitution = detectInstitutionFromFilename(file.name);
     const needsManualClassification = detectedType === 'Unknown / Needs Review';
+    const suggestedPeriod = inferStatementPeriodFromFilename(file.name);
     try {
       const stored = await saveUploadedFile(docId, file);
       const newDoc: DocumentRecord = {
@@ -517,7 +605,8 @@ export default function DocumentsView({
         ocr_status: needsManualClassification ? 'Low Confidence' : 'Pending',
         ocr_confidence: needsManualClassification ? 0.5 : 0.75,
         institution_name: detectedInstitution || 'Not detected',
-        statement_period: '',
+        statement_period: suggestedPeriod,
+        statement_period_suggestion: suggestedPeriod,
         processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
         user_notes: 'Source file stored locally. Institution and type may be detected from filename only; document text has not been read and transactions have not been extracted.',
         local_file: { storage: 'indexeddb', stored: true },
@@ -568,7 +657,7 @@ export default function DocumentsView({
   };
 
   const deleteOriginalFileOnly = async (doc: DocumentRecord) => {
-    if (!confirm('Delete only the stored original source file? Document metadata and extracted transactions will remain.')) return;
+    if (!confirm('Delete only the stored original source file? Document information and extracted transactions will remain.')) return;
     try {
       await deleteUploadedFile(doc.id);
       if (previewObjectUrlRef.current) {
@@ -868,7 +957,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Import Spreadsheet Data</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Use this only when you already have transaction rows copied from a bank CSV or spreadsheet. This does not read your PDF automatically.</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Choose an uploaded CSV/text spreadsheet first, or paste rows manually as an advanced fallback.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -879,11 +968,21 @@ Files are stored in this browser’s local storage for this device and website. 
         {isCsvPanelOpen && (
           <div className="p-5 space-y-4 animate-fadeIn" id="csv-wizard-interior">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-              <div className="md:col-span-2 space-y-2">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase">Paste Transactions</label>
+              <div className="md:col-span-2 space-y-3">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 space-y-2">
+                  <label className="block text-[10px] font-bold text-emerald-800 uppercase">Uploaded Spreadsheet File</label>
+                  <select value={selectedCsvDocId} onChange={e => setSelectedCsvDocId(e.target.value)} className="w-full bg-white border border-emerald-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
+                    <option value="">Select CSV or text file</option>
+                    {documents.filter(isSpreadsheetDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
+                  </select>
+                  {documents.filter(isSpreadsheetDocument).length === 0 && <p className="text-[10px] text-amber-700">No uploaded spreadsheet files found. Upload a CSV or paste rows manually.</p>}
+                  <button type="button" onClick={importSelectedSpreadsheet} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">Import Selected Spreadsheet</button>
+                </div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Spreadsheet Rows</label>
+                <p className="text-[10px] text-slate-500">Use this when you copied rows from a bank CSV or spreadsheet. This does not read PDFs.</p>
                 <textarea 
                   rows={6}
-                  placeholder={`Date,Description,Amount,Type\n05/18/2026,"Whole Foods",124.50,debit\n05/19/2026,"YMCA Childcare",260.00,debit`}
+                  placeholder="Paste CSV rows only if the uploaded spreadsheet reader is not enough."
                   value={csvText}
                   onChange={e => setCsvText(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded p-2.5 text-slate-900 font-mono text-[11px] outline-hidden focus:border-indigo-400 focus:bg-white"
@@ -920,6 +1019,8 @@ Files are stored in this browser’s local storage for this device and website. 
                       </option>
                     ))}
                   </select>
+                  <p className="text-[10px] text-slate-400 mt-1">Choose an account folder only if this document belongs with one. This does not connect to a bank.</p>
+                  {accounts.length === 0 && <p className="text-[10px] text-amber-700 mt-1">No account folders created yet. You can add one in Accounts Manager or leave this blank.</p>}
                 </div>
 
                 <div>
@@ -1099,7 +1200,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Read Document Text</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">If automatic reading does not work, copy text from a PDF and paste it here. NAFA Ledger will try to find dates, merchants, amounts, balances, and other useful information.</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Choose an uploaded document first. Paste text manually only if automatic reading does not work.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -1110,11 +1211,20 @@ Files are stored in this browser’s local storage for this device and website. 
         {isPdfPanelOpen && (
           <div className="p-5 space-y-4 animate-fadeIn" id="pdf-wizard-interior">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-              <div className="md:col-span-2 space-y-2">
-                <label className="block text-[10px] font-bold text-slate-400 uppercase">Paste Text Content from Text-based PDF or Bank Portal Clip</label>
+              <div className="md:col-span-2 space-y-3">
+                <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-2">
+                  <label className="block text-[10px] font-bold text-indigo-800 uppercase">Uploaded Document</label>
+                  <select value={selectedReadableDocId} onChange={e => setSelectedReadableDocId(e.target.value)} className="w-full bg-white border border-indigo-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
+                    <option value="">Select a locally stored PDF, text, or CSV document</option>
+                    {documents.filter(isReadableDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
+                  </select>
+                  <button type="button" onClick={readSelectedDocumentText} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
+                </div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Text Manually</label>
+                <p className="text-[10px] text-slate-500">Use this only if automatic reading does not work.</p>
                 <textarea 
                   rows={6}
-                  placeholder="No document text loaded yet. Copy text from a PDF or bank portal and paste it here."
+                  placeholder="Paste document text only if automatic reading does not work."
                   value={pdfText}
                   onChange={e => setPdfText(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded p-2.5 text-slate-900 font-mono text-[11px] outline-hidden focus:border-indigo-400 focus:bg-white"
@@ -1151,6 +1261,8 @@ Files are stored in this browser’s local storage for this device and website. 
                       </option>
                     ))}
                   </select>
+                  <p className="text-[10px] text-slate-400 mt-1">Choose an account folder only if this document belongs with one. This does not connect to a bank.</p>
+                  {accounts.length === 0 && <p className="text-[10px] text-amber-700 mt-1">No account folders created yet. You can add one in Accounts Manager or leave this blank.</p>}
                 </div>
 
                 <div>
@@ -1318,6 +1430,8 @@ Files are stored in this browser’s local storage for this device and website. 
                 // Dynamically fetch extracted rows count & count matches
                 const rowCount = transactions.filter(t => t.source_document_id === doc.id).length;
                 const issuesCount = isUnderReview ? 1 : 0;
+                const transactionStatus = getTransactionStatusExplanation(doc, rowCount);
+                const progressLabels = getProgressLabels(doc, rowCount);
 
                 return (
                   <tr key={doc.id} className="hover:bg-slate-50/50 transition-colors">
@@ -1325,7 +1439,7 @@ Files are stored in this browser’s local storage for this device and website. 
                       <div 
                         onClick={() => setSelectedDocForPreview(doc)}
                         className="flex items-start gap-2.5 cursor-pointer group"
-                        title="Click to view layout preview and edit metadata"
+                        title="Click to view file details and edit document information"
                       >
                         <FileText className="h-5 w-5 text-indigo-500 mt-0.5 shrink-0 group-hover:scale-110 transition-transform" />
                         <div className="min-w-0">
@@ -1333,6 +1447,9 @@ Files are stored in this browser’s local storage for this device and website. 
                           <span className="text-[9px] text-slate-400 block mt-0.5 font-mono">
                             ID: {doc.id} · Uploaded {new Date(doc.upload_timestamp).toLocaleDateString()}
                           </span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {progressLabels.map(label => <span key={label} className="bg-slate-100 border border-slate-200 text-slate-600 rounded px-1 py-0.5 text-[8px] font-bold uppercase">{label}</span>)}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -1342,7 +1459,7 @@ Files are stored in this browser’s local storage for this device and website. 
                       </span>
                     </td>
                     <td className="p-3 font-mono text-[10px] text-slate-600">
-                      {doc.statement_period || 'N/A'}
+                      {doc.statement_period || 'Statement period not detected'}
                     </td>
                     <td className="p-3 font-mono text-[11px] font-bold text-slate-700">
                       {rowCount > 0 ? (
@@ -1353,7 +1470,7 @@ Files are stored in this browser’s local storage for this device and website. 
                           Show {rowCount} Rows
                         </button>
                       ) : (
-                        <span className="text-slate-400 font-mono italic text-[10px]">None</span>
+                        <span className="text-slate-500 font-sans text-[10px] leading-snug block max-w-48">{transactionStatus}</span>
                       )}
                     </td>
                     <td className="p-3">
@@ -1395,7 +1512,7 @@ Files are stored in this browser’s local storage for this device and website. 
                           ⚠️ {issuesCount} unresolved
                         </span>
                       ) : (
-                        <span className="text-slate-400 font-mono text-[9px] font-medium">None</span>
+                        <span className="text-slate-400 font-mono text-[9px] font-medium">No open issues</span>
                       )}
                     </td>
                     <td className="p-3 text-right">
@@ -1403,7 +1520,7 @@ Files are stored in this browser’s local storage for this device and website. 
                         <button
                           onClick={() => setSelectedDocForPreview(doc)}
                           className="bg-indigo-55 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded px-2 py-1 text-[10px] font-bold transition-all cursor-pointer inline-flex items-center gap-1 select-none"
-                          title="Open document details and metadata editor"
+                          title="Open document details and edit document information"
                         >
                           👁️ View Details
                         </button>
@@ -1425,7 +1542,7 @@ Files are stored in this browser’s local storage for this device and website. 
               })}
               {filteredDocs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="text-center p-8 text-slate-400 italic">
+                  <td colSpan={8} className="text-center p-8 text-slate-400 italic">
                     No documents uploaded yet.
                   </td>
                 </tr>
@@ -1495,7 +1612,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <div>
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Statement dates</span>
                   <span className="font-mono text-slate-800 font-semibold">
-                    {selectedDocForPreview.statement_period || 'N/A'}
+                    {selectedDocForPreview.statement_period || 'Statement period not detected'}
                   </span>
                 </div>
                 <div>
@@ -1508,11 +1625,24 @@ Files are stored in this browser’s local storage for this device and website. 
 
               <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 text-xs space-y-3">
                 <h4 className="text-[10px] font-bold text-emerald-900 uppercase tracking-widest">Document Storage Status</h4>
+                <div className="flex flex-wrap gap-1">
+                  {getProgressLabels(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length).map(label => <span key={label} className="bg-white border border-emerald-200 text-emerald-800 rounded px-2 py-0.5 text-[9px] font-bold uppercase">{label}</span>)}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'Metadata only' : 'Not available in this browser'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Document Text</span>{selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read successfully' : selectedDocForPreview.text_extraction_status === 'failed' || selectedDocForPreview.text_extraction_status === 'needs_review' ? 'Failed / OCR needed' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
+                <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Transaction Status:</strong> {getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</p>
+                {selectedDocForPreview.text_extraction_status === 'failed' && (
+                  <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
+                    <p><strong>File Preview:</strong> {previewFileAvailable ? 'Available' : 'Not Available'}</p>
+                    <p><strong>Text Extraction:</strong> Failed</p>
+                    <p><strong>Reason:</strong> {selectedDocForPreview.text_extraction_error || 'Local reader could not find readable text.'}</p>
+                    <p><strong>Transactions:</strong> Not Extracted</p>
+                    <p><strong>Next Step:</strong> OCR or improved PDF reader needed</p>
+                  </div>
+                )}
                 {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2">Source file unavailable in this browser.</p>
                 )}
@@ -1529,7 +1659,7 @@ Files are stored in this browser’s local storage for this device and website. 
               {/* ACTION: RENAME & RECLASSIFY & EDIT NOTES INLINE */}
               <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4 shadow-2xs">
                 <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider border-b pb-1.5 flex items-center gap-1.5">
-                  ✏️ Edit Document Metadata
+                  ✏️ Document Information
                 </h4>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -1587,7 +1717,52 @@ Files are stored in this browser’s local storage for this device and website. 
                       </option>
                     ))}
                   </select>
-                  <p className="text-[10px] text-slate-400 mt-1">Choose an account only if this document belongs with one. This does not connect to a bank.</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Choose an account folder only if this document belongs with one. This does not connect to a bank.</p>
+                  {accounts.length === 0 && <p className="text-[10px] text-amber-700 mt-1">No account folders created yet. You can add one in Accounts Manager or leave this blank.</p>}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Statement Start Date</label>
+                    <input
+                      type="date"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-mono text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                      value={selectedDocForPreview.statement_start_date || ''}
+                      onChange={e => {
+                        const value = e.target.value;
+                        onUpdateDocument?.(selectedDocForPreview.id, { statement_start_date: value });
+                        setSelectedDocForPreview(prev => prev ? { ...prev, statement_start_date: value } : null);
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Statement End Date</label>
+                    <input
+                      type="date"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-mono text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                      value={selectedDocForPreview.statement_end_date || ''}
+                      onChange={e => {
+                        const value = e.target.value;
+                        onUpdateDocument?.(selectedDocForPreview.id, { statement_end_date: value });
+                        setSelectedDocForPreview(prev => prev ? { ...prev, statement_end_date: value } : null);
+                      }}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Statement Period Note</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-mono text-slate-950 focus:bg-white focus:border-indigo-400 outline-hidden"
+                      placeholder="Statement period not detected"
+                      value={selectedDocForPreview.statement_period || ''}
+                      onChange={e => {
+                        const value = e.target.value;
+                        onUpdateDocument?.(selectedDocForPreview.id, { statement_period: value });
+                        setSelectedDocForPreview(prev => prev ? { ...prev, statement_period: value } : null);
+                      }}
+                    />
+                    <p className="text-[10px] text-slate-400 mt-1">{selectedDocForPreview.statement_period_suggestion ? selectedDocForPreview.statement_period_suggestion : 'Statement period not detected. Enter start and end dates manually when known.'}</p>
+                  </div>
                 </div>
 
                 <div>
@@ -1615,7 +1790,7 @@ Files are stored in this browser’s local storage for this device and website. 
                     📄 Document Details
                   </h4>
                   <span className="text-[9px] font-mono bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 uppercase">
-                    Metadata View
+                    Details View
                   </span>
                 </div>
                 

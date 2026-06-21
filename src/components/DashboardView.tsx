@@ -82,16 +82,6 @@ export default function DashboardView({
         </button>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-        <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider mb-3">Quick Actions</h4>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-          {[['Upload Document', 'documents'], ['View Documents', 'documents'], ['Analyze Documents', 'ai-chat'], ['Create Report', 'reports']].map(([label, tab]) => (
-            <button key={label} onClick={() => onNavigate(tab)} className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold uppercase rounded-lg py-2 px-3">{label}</button>
-          ))}
-        </div>
-        {documents.length === 0 && <p className="text-xs text-slate-500 mt-3">No documents uploaded yet.</p>}
-        {documents.length > 0 && transactions.length === 0 && <p className="text-xs text-amber-700 mt-3">Documents uploaded. Extract or import transactions to generate financial charts.</p>}
-      </div>
 
       {/* Analytical KPI Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4" id="metric-cards-grid">
