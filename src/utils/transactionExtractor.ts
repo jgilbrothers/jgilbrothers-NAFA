@@ -27,12 +27,12 @@ export interface TransactionExtractionContext {
   statementPeriod?: string;
 }
 
-const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?|[-+]?\$?\(?\d+\.\d{2}\)?)/g;
-const datePattern = /\b(?:\d{1,2}[\/]\d{1,2}(?:[\/]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
+const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?|[-+]?\$?\(?\d+\.\d{2}\)?-?)/g;
+const datePattern = /\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
 const shortDatePattern = /^\d{1,2}\/\d{1,2}$/;
 const balanceWords = /\b(balance|available|previous|ending|beginning|total|summary|minimum payment|interest charged)\b/i;
-const debitClues = /\b(payment to|online payment to|ach payment to|bill pay|payment sent|debit card payment|pos|purchase|withdrawal|debit|atm|check|fee)\b/i;
-const creditClues = /\b(payment received|deposit|direct deposit|payroll|refund|credit|reversal|cashback|interest paid)\b/i;
+const debitClues = /\b(payment to|online payment to|ach payment to|bill pay|payment sent|debit card payment|pos|purchase|withdrawal|debit|debit card|atm|check|share draft|fee|secu card|usaa debit)\b/i;
+const creditClues = /\b(payment received|deposit|direct deposit|payroll|refund|credit|reversal|cashback|interest paid|mobile deposit|ach credit|remote deposit)\b/i;
 const genericPayment = /\bpayment\b/i;
 
 const parseAmount = (value: string): number => {
@@ -40,6 +40,29 @@ const parseAmount = (value: string): number => {
   const negative = trimmed.includes('(') || trimmed.startsWith('-') || trimmed.endsWith('-');
   const parsed = parseFloat(trimmed.replace(/[,$()+-]/g, '')) || 0;
   return negative ? -Math.abs(parsed) : parsed;
+};
+
+const findTransactionDates = (line: string): string[] => [...line.matchAll(new RegExp(datePattern.source, 'g'))].map(m => m[0]);
+
+const inferAmountColumns = (line: string, amounts: string[]): { amount: number; runningBalance?: number; reason?: string } => {
+  const lower = line.toLowerCase();
+  if (amounts.length === 1) return { amount: parseAmount(amounts[0]) };
+
+  const parsed = amounts.map(parseAmount);
+  const debitCreditBalance = lower.match(/(?:debit|withdrawal|paid out)\s+(?:credit|deposit|paid in)\s+(?:balance)/i);
+  if (debitCreditBalance && amounts.length >= 3) {
+    const debit = Math.abs(parsed[0]);
+    const credit = Math.abs(parsed[1]);
+    const runningBalance = Math.abs(parsed[2]);
+    if (debit > 0 && credit === 0) return { amount: debit, runningBalance };
+    if (credit > 0 && debit === 0) return { amount: credit, runningBalance };
+  }
+
+  return {
+    amount: parsed[0],
+    runningBalance: Math.abs(parsed[amounts.length - 1]),
+    reason: amounts.length > 2 ? 'multiple amount columns detected; verify debit/credit/balance mapping' : undefined,
+  };
 };
 
 const expandYear = (year: string): number => {
@@ -126,33 +149,39 @@ export function extractTransactionCandidates(
     pageText.split(/\r?\n/).forEach((line, lineIndex) => {
       const clean = line.trim();
       if (clean.length < 8) return;
-      const dateMatch = clean.match(datePattern);
+      const dateMatches = findTransactionDates(clean);
+      const dateMatch = dateMatches[0];
+      const effectiveDate = dateMatches.length > 1 ? dateMatches[1] : undefined;
       const amountMatches = clean.match(moneyPattern) || [];
       if (!dateMatch || amountMatches.length === 0) return;
 
       const isBalanceLine = balanceWords.test(clean) && amountMatches.length <= 1;
-      const amount = parseAmount(amountMatches[0]);
-      const runningBalance = amountMatches.length > 1 ? Math.abs(parseAmount(amountMatches[amountMatches.length - 1])) : undefined;
-      let description = clean.replace(dateMatch[0], ' ');
+      const inferredAmounts = inferAmountColumns(clean, amountMatches);
+      const amount = inferredAmounts.amount;
+      const runningBalance = inferredAmounts.runningBalance;
+      let description = clean.replace(dateMatch, ' ');
+      if (effectiveDate) description = description.replace(effectiveDate, ' ');
       amountMatches.forEach(amountText => { description = description.replace(amountText, ' '); });
       description = description.replace(/\s+/g, ' ').trim();
 
-      const normalizedDate = normalizeTransactionDate(dateMatch[0], context?.statementPeriod);
+      const normalizedDate = normalizeTransactionDate(effectiveDate || dateMatch, context?.statementPeriod);
+      const normalizedPostedDate = effectiveDate ? normalizeTransactionDate(dateMatch, context?.statementPeriod) : undefined;
       const direction = inferTransactionType(clean, amount, context);
       const reviewReasons: string[] = [];
       if (isBalanceLine) reviewReasons.push('balance line detected but not transaction');
       if (!description || description.length < 3) reviewReasons.push('merchant unclear');
-      if (!dateMatch[0]) reviewReasons.push('unclear date');
+      if (!dateMatch) reviewReasons.push('unclear date');
       if (normalizedDate.needsReview && normalizedDate.reason) reviewReasons.push(normalizedDate.reason);
       if (!Number.isFinite(amount) || amount === 0) reviewReasons.push('unclear amount');
       if (direction.reason) reviewReasons.push(direction.reason);
-      if (amountMatches.length > 2) reviewReasons.push('statement format not recognized');
+      if (inferredAmounts.reason) reviewReasons.push(inferredAmounts.reason);
 
       const needsReview = reviewReasons.length > 0 || direction.type === 'unknown';
       candidates.push({
         id: `CAND-${documentId}-${pageIndex + 1}-${lineIndex + 1}`,
         documentId,
         transactionDate: normalizedDate.date,
+        postedDate: normalizedPostedDate?.date,
         rawDescription: description || clean,
         cleanMerchantName: cleanMerchant(description),
         amount: Math.abs(amount),
@@ -161,7 +190,7 @@ export function extractTransactionCandidates(
         sourcePage: context?.sourcePagesApproximate ? undefined : pageIndex + 1,
         sourcePageApproximate: Boolean(context?.sourcePagesApproximate),
         sourceLine: lineIndex + 1,
-        confidenceScore: needsReview ? 0.55 : 0.86,
+        confidenceScore: needsReview ? 0.55 : effectiveDate ? 0.9 : 0.86,
         needsReview,
         reviewReason: reviewReasons.join('; ') || (normalizedDate.inferredYear ? 'year inferred from statement period' : undefined),
       });

@@ -6,7 +6,11 @@ export interface PdfTextExtractionResult {
   error?: string;
   confidence: number;
   readStatus: 'readable_text' | 'no_selectable_text' | 'partial_text' | 'failed';
+  parser: 'pdfjs-dist' | 'lightweight-fallback';
+  warning?: string;
 }
+
+const PDFJS_INSTALL_BLOCKED_WARNING = 'pdfjs-dist could not be installed in this environment: npm install pdfjs-dist returned 403 Forbidden from https://registry.npmjs.org/pdfjs-dist. NAFA Ledger is using the existing lightweight local reader as a visible fallback; scanned, image-based, encrypted, or compressed PDFs may require OCR later.';
 
 const decodePdfEscapes = (value: string): string => value
   .replace(/\\n/g, '\n')
@@ -19,41 +23,57 @@ const decodePdfEscapes = (value: string): string => value
 
 const cleanText = (value: string): string => value
   .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
-  .replace(/\s+\n/g, '\n')
+  .replace(/[ \t]+\n/g, '\n')
   .replace(/[ \t]{2,}/g, ' ')
   .replace(/\n{3,}/g, '\n\n')
   .trim();
 
-// Lightweight extraction scans PDF text fragments and does not provide court-ready page mapping.
-// Per-page text is an approximate split unless a future full PDF reader is added.
+const extractTextFragments = (raw: string): string => {
+  const fragments: string[] = [];
+  const literalRegex = /\((?:\\.|[^\\()])*\)\s*(?:Tj|'|")/g;
+  let literalMatch: RegExpExecArray | null;
+  while ((literalMatch = literalRegex.exec(raw))) {
+    fragments.push(decodePdfEscapes(literalMatch[0].replace(/\)\s*(?:Tj|'|")$/, '').slice(1)));
+  }
+
+  const arrayRegex = /\[((?:\s*\((?:\\.|[^\\()])*\)\s*-?\d*\.?\d*)+)\]\s*TJ/g;
+  let arrayMatch: RegExpExecArray | null;
+  while ((arrayMatch = arrayRegex.exec(raw))) {
+    const parts = [...arrayMatch[1].matchAll(/\((?:\\.|[^\\()])*\)/g)].map(m => decodePdfEscapes(m[0].slice(1, -1)));
+    fragments.push(parts.join(''));
+  }
+  return cleanText(fragments.join('\n'));
+};
+
+const splitApproximatePages = (raw: string, text: string, pageCount: number): string[] => {
+  const pageMarkers = [...raw.matchAll(/\/Type\s*\/Page\b/g)].map(m => m.index || 0);
+  if (pageMarkers.length > 1) {
+    const pageTexts = pageMarkers.map((start, index) => {
+      const end = pageMarkers[index + 1] || raw.length;
+      return extractTextFragments(raw.slice(start, end));
+    }).filter(Boolean);
+    if (pageTexts.length) return pageTexts;
+  }
+  const perPageSize = Math.max(1, Math.ceil(text.length / Math.max(pageCount, 1)));
+  return Array.from({ length: pageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);
+};
+
+// pdfjs-dist installation was attempted for this patch but blocked by registry/security policy.
+// This fallback remains intentionally visible through `warning` so callers do not silently trust it as a full parser.
 export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResult> {
   try {
     const buffer = await blob.arrayBuffer();
     const raw = new TextDecoder('latin1').decode(buffer);
     const pageCount = Math.max((raw.match(/\/Type\s*\/Page\b/g) || []).length, 1);
-    const fragments: string[] = [];
+    const text = extractTextFragments(raw);
 
-    const literalRegex = /\((?:\\.|[^\\()])*\)\s*(?:Tj|'|")/g;
-    let literalMatch: RegExpExecArray | null;
-    while ((literalMatch = literalRegex.exec(raw))) {
-      fragments.push(decodePdfEscapes(literalMatch[0].replace(/\)\s*(?:Tj|'|")$/, '').slice(1)));
-    }
-
-    const arrayRegex = /\[((?:\s*\((?:\\.|[^\\()])*\)\s*-?\d*\.?\d*)+)\]\s*TJ/g;
-    let arrayMatch: RegExpExecArray | null;
-    while ((arrayMatch = arrayRegex.exec(raw))) {
-      const parts = [...arrayMatch[1].matchAll(/\((?:\\.|[^\\()])*\)/g)].map(m => decodePdfEscapes(m[0].slice(1, -1)));
-      fragments.push(parts.join(''));
-    }
-
-    const text = cleanText(fragments.join('\n'));
     if (text.length < 20) {
-      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', error: 'NAFA Ledger could not find readable text in this PDF. This PDF may contain compressed or image-based text that the local lightweight reader cannot extract yet. OCR or an improved PDF reader will be needed in a later phase.' };
+      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: 'This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.' };
     }
-    const perPageSize = Math.ceil(text.length / pageCount);
-    const pageTexts = Array.from({ length: pageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize));
-    return { text, pageCount, pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.85 : 0.65, readStatus: text.length > 500 ? 'readable_text' : 'partial_text' };
+
+    const pageTexts = splitApproximatePages(raw, text, pageCount);
+    return { text, pageCount, pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING };
   } catch (err: any) {
-    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', error: err?.message || 'PDF parsing failed locally.' };
+    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: err?.message || 'PDF parsing failed locally. This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.' };
   }
 }
