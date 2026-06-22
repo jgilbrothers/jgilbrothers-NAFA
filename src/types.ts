@@ -38,8 +38,13 @@ export interface DocumentRecord {
   filename: string;
   upload_timestamp: string;
   file_type: 'Checking Statement' | 'Savings Statement' | 'Credit Card Statement' | 'Paystub' | 'Receipt' | 'Tax Document' | 'Court Document' | 'Legal Order' | 'Loan Document' | 'Utility Bill' | 'Insurance Document' | 'Other' | 'Unknown / Needs Review';
-  ocr_status: 'Pending' | 'Success' | 'Low Confidence' | 'Failed';
+  ocr_status: 'not_started' | 'running' | 'succeeded' | 'failed' | 'needs_review' | 'Pending' | 'Success' | 'Low Confidence' | 'Failed';
   ocr_confidence: number; // 0.0 - 1.0
+  ocr_text_available?: boolean;
+  ocr_read_at?: string;
+  ocr_error?: string;
+  ocr_engine?: 'local';
+  text_source?: 'pdf' | 'ocr' | 'manual' | 'csv';
   account_id?: string;
   institution_name: string;
   statement_period?: string;

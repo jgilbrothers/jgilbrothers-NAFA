@@ -18,6 +18,7 @@ export interface TransactionCandidate {
   reviewReason?: string;
   excluded?: boolean;
   note?: string;
+  source?: 'PDF_TEXT' | 'OCR' | 'MANUAL';
 }
 
 export interface TransactionExtractionContext {
