@@ -21,7 +21,7 @@ import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/
 import { extractPdfText } from '../utils/pdfTextExtractor';
 import { getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
 import { extractTransactionCandidates, TransactionCandidate } from '../utils/transactionExtractor';
-import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, LOCAL_OCR_INSTALL_ERROR, runLocalImageOcr } from '../utils/localOcr';
+import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, LOCAL_OCR_LOAD_ERROR, runLocalImageOcr } from '../utils/localOcr';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
@@ -34,6 +34,16 @@ const DEFAULT_COLUMN_MAPPING = {
 };
 
 const createImportBatchId = () => `${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+
+const buildReceiptOcrNote = (
+  currentNote = '',
+  receiptFields: ReturnType<typeof extractReceiptFieldsFromText>
+) => {
+  const candidate = `OCR receipt candidate: ${receiptFields.merchant || 'merchant unclear'} ${receiptFields.date || 'date unclear'} ${receiptFields.totalAmount ? `$${receiptFields.totalAmount.toFixed(2)}` : 'total unclear'}${receiptFields.paymentMethod ? ` paid by ${receiptFields.paymentMethod}` : ''}. Review before adding to ledger.`;
+  if (!currentNote.trim()) return candidate;
+  if (!currentNote.includes('OCR receipt candidate:')) return `${currentNote.trim()}\n${candidate}`;
+  return currentNote.replace(/OCR receipt candidate:.*?(?=\n|$)/, candidate);
+};
 
 interface DocumentsViewProps {
   documents: DocumentRecord[];
@@ -909,7 +919,7 @@ export default function DocumentsView({
   const runLocalOcrForDocument = async (doc: DocumentRecord) => {
     setOcrBusy(true);
     setOcrProgress('OCR running — preparing local engine. OCR can take time on phones. Laptop or desktop is recommended for large files.');
-    const running: Partial<DocumentRecord> = { ocr_status: 'running', ocr_error: undefined, ocr_engine: 'local', processing_status: 'Processing' };
+    const running: Partial<DocumentRecord> = { ocr_status: 'running', ocr_error: undefined, ocr_engine: 'tesseract-cdn', processing_status: 'Processing' };
     onUpdateDocument?.(doc.id, running);
     setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...running } : prev);
     try {
@@ -921,7 +931,7 @@ export default function DocumentsView({
         setErrorNotification('This document may be too large for local OCR on this device. Laptop or desktop is recommended for large OCR jobs.');
       }
       if (isPdfOcrCandidate(mime, filename)) {
-        throw new Error('OCR for scanned PDF pages will be added after image OCR is stable. Try exporting the scanned page as PNG/JPG/WebP, then run Local OCR.');
+        throw new Error('Scanned PDF OCR will be added after image OCR is stable. Try exporting the scanned page as PNG/JPG/WebP, then run Local OCR.');
       }
       if (!isImageOcrSupported(mime, filename)) {
         throw new Error('Local OCR currently supports PNG, JPG, JPEG, and WebP images. PDF text extraction remains available for text-based PDFs.');
@@ -931,11 +941,11 @@ export default function DocumentsView({
         setOcrProgress(`OCR running — ${progress.status || 'processing image'}${pct}.`);
       });
       const now = new Date().toISOString();
-      if (!result.text.trim()) throw new Error('Local OCR completed but did not find readable text. The image may be too blurry, cropped, or low contrast.');
+      if (!(result.text || '').trim()) throw new Error('Local OCR completed but did not find readable text. The image may be too blurry, cropped, or low contrast.');
       const receiptFields = doc.file_type === 'Receipt' ? extractReceiptFieldsFromText(result.text) : undefined;
       await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now });
       setExtractedText(result.text);
-      const lowConfidence = typeof result.confidence === 'number' && result.confidence < 0.75;
+      const lowConfidence = result.status === 'needs_review' || (typeof result.confidence === 'number' && result.confidence < 0.75);
       const updates: Partial<DocumentRecord> = {
         text_read: true,
         text_read_at: now,
@@ -949,21 +959,21 @@ export default function DocumentsView({
         ocr_read_at: now,
         ocr_confidence: result.confidence ?? 0.6,
         ocr_error: undefined,
-        ocr_engine: 'local',
+        ocr_engine: result.engine,
         text_source: 'ocr',
         processing_status: 'Requires Verification',
         extracted_merchant: receiptFields?.merchant || doc.extracted_merchant,
         extracted_date: receiptFields?.date || doc.extracted_date,
         extracted_amount: receiptFields?.totalAmount || doc.extracted_amount,
-        user_notes: doc.file_type === 'Receipt' && receiptFields ? `${doc.user_notes || ''}\nOCR receipt candidate: ${receiptFields.merchant || 'merchant unclear'} ${receiptFields.date || 'date unclear'} ${receiptFields.totalAmount ? `$${receiptFields.totalAmount.toFixed(2)}` : 'total unclear'}${receiptFields.paymentMethod ? ` paid by ${receiptFields.paymentMethod}` : ''}. Review before adding to ledger.`.trim() : doc.user_notes,
+        user_notes: doc.file_type === 'Receipt' && receiptFields ? buildReceiptOcrNote(doc.user_notes, receiptFields) : doc.user_notes,
       };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       setOcrProgress('OCR completed — text is stored locally.');
       setSuccessNotification('Local OCR succeeded. Text source: OCR. Review extracted text and candidates before importing.');
     } catch (err: any) {
-      const message = err?.message || LOCAL_OCR_INSTALL_ERROR;
-      const updates: Partial<DocumentRecord> = { ocr_status: 'failed', ocr_text_available: false, ocr_error: message, ocr_confidence: 0, ocr_engine: 'local', processing_status: 'Requires Verification' };
+      const message = err?.message || LOCAL_OCR_LOAD_ERROR;
+      const updates: Partial<DocumentRecord> = { ocr_status: 'failed', ocr_text_available: false, ocr_error: message, ocr_confidence: 0, ocr_engine: 'tesseract-cdn', processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       setOcrProgress('OCR failed.');
@@ -1821,10 +1831,10 @@ Files are stored in this browser’s local storage for this device and website. 
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' ? 'Read by OCR' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
-                <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. If Tesseract.js is installed, it may download an OCR language model, but document files stay local. Current install note: npm install tesseract.js returned 403 Forbidden in this environment.</p>
+                <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
                 {ocrProgress && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2"><strong>OCR:</strong> {ocrProgress}</p>}
                 {selectedDocForPreview.ocr_error && <p className="text-[11px] text-rose-800 bg-rose-50 border border-rose-100 rounded-lg p-2"><strong>OCR failed:</strong> {selectedDocForPreview.ocr_error}</p>}
-                {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">OCR for scanned PDF pages will be added after image OCR is stable.</p>}
+                {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">Scanned PDF OCR will be added after image OCR is stable.</p>}
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Transaction Status:</strong> {getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</p>
                 {selectedDocForPreview.text_extraction_status === 'failed' && (
                   <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">

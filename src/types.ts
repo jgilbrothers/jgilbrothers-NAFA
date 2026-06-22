@@ -43,7 +43,7 @@ export interface DocumentRecord {
   ocr_text_available?: boolean;
   ocr_read_at?: string;
   ocr_error?: string;
-  ocr_engine?: 'local';
+  ocr_engine?: 'local' | 'tesseract-local' | 'tesseract-cdn';
   text_source?: 'pdf' | 'ocr' | 'manual' | 'csv';
   account_id?: string;
   institution_name: string;
