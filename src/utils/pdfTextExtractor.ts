@@ -45,6 +45,21 @@ const extractTextFragments = (raw: string): string => {
   return cleanText(fragments.join('\n'));
 };
 
+const compactForCoverage = (value: string): string => value.replace(/\s+/g, '');
+
+const hasSubstantialTextCoverage = (fullText: string, pageTexts: string[]): boolean => {
+  const fullCompact = compactForCoverage(fullText);
+  const pagesCompact = compactForCoverage(pageTexts.join('\n'));
+  if (!fullCompact) return false;
+  return pagesCompact.length / fullCompact.length >= 0.85;
+};
+
+const splitEvenlyOverFullText = (text: string, pageCount: number): string[] => {
+  const safePageCount = Math.max(pageCount, 1);
+  const perPageSize = Math.max(1, Math.ceil(text.length / safePageCount));
+  return Array.from({ length: safePageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);
+};
+
 const splitApproximatePages = (raw: string, text: string, pageCount: number): string[] => {
   const pageMarkers = [...raw.matchAll(/\/Type\s*\/Page\b/g)].map(m => m.index || 0);
   if (pageMarkers.length > 1) {
@@ -52,10 +67,13 @@ const splitApproximatePages = (raw: string, text: string, pageCount: number): st
       const end = pageMarkers[index + 1] || raw.length;
       return extractTextFragments(raw.slice(start, end));
     });
-    if (pageTexts.length === pageCount && pageTexts.every(page => page.trim().length > 0)) return pageTexts;
+    const hasEveryPage = pageTexts.length === pageCount && pageTexts.every(page => page.trim().length > 0);
+    if (hasEveryPage && hasSubstantialTextCoverage(text, pageTexts)) return pageTexts;
   }
-  const perPageSize = Math.max(1, Math.ceil(text.length / Math.max(pageCount, 1)));
-  return Array.from({ length: pageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);
+
+  // PDF object order is not guaranteed. If page-object slices do not substantially cover
+  // the full extracted text, keep all text by evenly splitting the full extraction instead.
+  return splitEvenlyOverFullText(text, pageCount);
 };
 
 // pdfjs-dist installation was attempted for this patch but blocked by registry/security policy.
