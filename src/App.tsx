@@ -611,6 +611,20 @@ export default function App() {
           merged.push(newItem);
         }
       });
+      if ((newDoc.needs_review_transaction_count || 0) > 0) {
+        const reviewItem = {
+          id: `REC-DOC-${newDoc.id}`,
+          type: 'Low_Confidence' as const,
+          title: 'Document import needs review',
+          description: `${newDoc.needs_review_transaction_count} imported transaction candidate(s) from ${newDoc.filename} were flagged for review. Open the source document and verify rows before relying on totals.`,
+          severity: 'medium' as const,
+          documentId: newDoc.id,
+          status: 'Unresolved' as const,
+        };
+        if (!merged.some(m => m.id === reviewItem.id)) {
+          merged.push(reviewItem);
+        }
+      }
       return merged;
     });
 

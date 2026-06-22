@@ -32,6 +32,8 @@ const DEFAULT_COLUMN_MAPPING = {
   catIdx: -1
 };
 
+const createImportBatchId = () => `${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+
 interface DocumentsViewProps {
   documents: DocumentRecord[];
   accounts: AccountSummary[];
@@ -270,7 +272,7 @@ export default function DocumentsView({
     const importedCount = pdfParsedRows.length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
-      file_type: linkedDoc.file_type || pdfDocType,
+      file_type: pdfDocType || linkedDoc.file_type,
       ocr_status: isLowConfidence ? 'Low Confidence' : 'Success',
       ocr_confidence: isLowConfidence ? 0.65 : Math.max(linkedDoc.ocr_confidence || 0, 0.95),
       account_id: pdfAccount || linkedDoc.account_id,
@@ -309,9 +311,11 @@ export default function DocumentsView({
       confirmed_transaction_count: importedCount,
     };
 
+    const importBatchId = createImportBatchId();
+    const sourceType = linkedDoc ? 'PDFLOCAL' : 'PASTE';
     const safeDocId = docId.replace(/[^A-Z0-9]/gi, '');
     const txs: Transaction[] = pdfParsedRows.map((row, index) => ({
-      transaction_id: `TX-PDF-${safeDocId}-${index + 1}`,
+      transaction_id: `TX-${sourceType}-${safeDocId}-${index + 1}-${importBatchId}`,
       transaction_date: row.date,
       raw_description: row.description,
       clean_vendor_name: row.description.split(/\s+/).slice(0, 3).join(' '),
@@ -429,7 +433,7 @@ export default function DocumentsView({
     const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
-      file_type: linkedDoc.file_type || csvDocType,
+      file_type: csvDocType || linkedDoc.file_type,
       ocr_status: routeToReviewQueue ? 'Low Confidence' : 'Success',
       ocr_confidence: routeToReviewQueue ? 0.65 : Math.max(linkedDoc.ocr_confidence || 0, 0.98),
       account_id: csvAccount || linkedDoc.account_id,
@@ -468,6 +472,8 @@ export default function DocumentsView({
       confirmed_transaction_count: importedCount,
     };
 
+    const importBatchId = createImportBatchId();
+    const sourceType = linkedDoc ? 'CSV' : 'PASTE';
     const safeDocId = docId.replace(/[^A-Z0-9]/gi, '');
     const txs: Transaction[] = csvParsedRows.map((row, index) => {
       const rawDate = row[columnMapping.dateIdx] || new Date().toISOString().substring(0, 10);
@@ -481,7 +487,7 @@ export default function DocumentsView({
       const amount = Math.abs(rawAmount);
 
       return {
-        transaction_id: `TX-CSV-${safeDocId}-${index + 1}`,
+        transaction_id: `TX-${sourceType}-${safeDocId}-${index + 1}-${importBatchId}`,
         transaction_date: rawDate,
         raw_description: rawDesc,
         clean_vendor_name: rawDesc.split(/\s+/).slice(0, 3).join(' '),
@@ -917,9 +923,9 @@ export default function DocumentsView({
       return;
     }
     const suffix = accounts.find(a => a.id === doc.account_id)?.account_suffix || '0000';
-    const importBatchId = Date.now().toString(36).toUpperCase();
+    const importBatchId = createImportBatchId();
     const txs: Transaction[] = confirmed.map((c, idx) => ({
-      transaction_id: `TX-PDFLOCAL-${doc.id.replace(/[^A-Z0-9]/gi, '')}-${importBatchId}-${idx + 1}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+      transaction_id: `TX-PDFLOCAL-${doc.id.replace(/[^A-Z0-9]/gi, '')}-${idx + 1}-${importBatchId}`,
       transaction_date: c.transactionDate,
       raw_description: c.rawDescription,
       clean_vendor_name: c.cleanMerchantName,
@@ -1068,13 +1074,13 @@ Files are stored in this browser’s local storage for this device and website. 
               <div className="md:col-span-2 space-y-3">
                 <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 space-y-2">
                   <label className="block text-[10px] font-bold text-emerald-800 uppercase">Uploaded Spreadsheet File</label>
-                  <select value={selectedCsvDocId} onChange={e => setSelectedCsvDocId(e.target.value)} className="w-full bg-white border border-emerald-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
+                  <select value={selectedCsvDocId} onChange={e => { setSelectedCsvDocId(e.target.value); setCsvParsedRows([]); setCsvHeaders([]); setColumnMapping(DEFAULT_COLUMN_MAPPING); setCsvErrorMessage(''); setRouteToReviewQueue(false); }} className="w-full bg-white border border-emerald-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
                     <option value="">Select CSV or text file</option>
                     {documents.filter(isSpreadsheetDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
                   </select>
                   {documents.filter(isSpreadsheetDocument).length === 0 && <p className="text-[10px] text-amber-700">No uploaded spreadsheet files found. Upload a CSV or paste rows manually.</p>}
                   <button type="button" onClick={importSelectedSpreadsheet} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">Import Selected Spreadsheet</button>
-                  <p className="text-[10px] text-emerald-800 font-semibold">{documents.find(doc => doc.id === selectedCsvDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedCsvDocId)?.filename}` : 'Pasted rows will create a document record because no source file is selected.'}</p>
+                  <p className="text-[10px] text-emerald-800 font-semibold">{documents.find(doc => doc.id === selectedCsvDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedCsvDocId)?.filename}` : 'This will create a document record because no uploaded source file is selected.'}</p>
                 </div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Spreadsheet Rows</label>
                 <p className="text-[10px] text-slate-500">Use this when you copied rows from a bank CSV or spreadsheet. This does not read PDFs.</p>
@@ -1312,12 +1318,12 @@ Files are stored in this browser’s local storage for this device and website. 
               <div className="md:col-span-2 space-y-3">
                 <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 space-y-2">
                   <label className="block text-[10px] font-bold text-indigo-800 uppercase">Uploaded Document</label>
-                  <select value={selectedReadableDocId} onChange={e => setSelectedReadableDocId(e.target.value)} className="w-full bg-white border border-indigo-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
+                  <select value={selectedReadableDocId} onChange={e => { setSelectedReadableDocId(e.target.value); setPdfParsedRows([]); setPdfInstitution(''); setPdfPeriod(''); setPdfSuffix(''); setPdfErrorMessage(''); setForcePdfReview(false); setTransactionCandidates([]); setReviewRowsOpen(false); }} className="w-full bg-white border border-indigo-200 rounded p-2 text-slate-950 font-semibold outline-hidden">
                     <option value="">Select a locally stored PDF, text, or CSV document</option>
                     {documents.filter(isReadableDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
                   </select>
                   <button type="button" onClick={readSelectedDocumentText} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
-                  <p className="text-[10px] text-indigo-800 font-semibold">{documents.find(doc => doc.id === selectedReadableDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedReadableDocId)?.filename}` : 'Pasted text will create a document record because no source file is selected.'}</p>
+                  <p className="text-[10px] text-indigo-800 font-semibold">{documents.find(doc => doc.id === selectedReadableDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedReadableDocId)?.filename}` : 'This will create a document record because no uploaded source file is selected.'}</p>
                 </div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Text Manually</label>
                 <p className="text-[10px] text-slate-500">Use this only if automatic reading does not work.</p>
