@@ -43,6 +43,9 @@ export interface DocumentRecord {
   account_id?: string;
   institution_name: string;
   statement_period?: string;
+  statement_start_date?: string;
+  statement_end_date?: string;
+  statement_period_suggestion?: string;
   user_notes?: string;
   processing_status: 'Completed' | 'Requires Classification' | 'Requires Verification' | 'Processing';
   raw_text?: string;

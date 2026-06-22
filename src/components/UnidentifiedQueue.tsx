@@ -165,7 +165,7 @@ export default function NeedsReviewQueue({
                 </div>
 
                 <div className="text-[10px] text-slate-450 italic leading-tight pt-2 border-t font-sans font-medium">
-                  Classification updates this document record. Account association is optional metadata.
+                  Classification updates this document record. Account match is optional.
                 </div>
 
               </div>

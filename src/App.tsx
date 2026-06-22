@@ -611,6 +611,20 @@ export default function App() {
           merged.push(newItem);
         }
       });
+      if ((newDoc.needs_review_transaction_count || 0) > 0) {
+        const reviewItem = {
+          id: `REC-DOC-${newDoc.id}`,
+          type: 'Low_Confidence' as const,
+          title: 'Document import needs review',
+          description: `${newDoc.needs_review_transaction_count} imported transaction candidate(s) from ${newDoc.filename} were flagged for review. Open the source document and verify rows before relying on totals.`,
+          severity: 'medium' as const,
+          documentId: newDoc.id,
+          status: 'Unresolved' as const,
+        };
+        if (!merged.some(m => m.id === reviewItem.id)) {
+          merged.push(reviewItem);
+        }
+      }
       return merged;
     });
 
@@ -716,7 +730,7 @@ export default function App() {
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Accounts</span><strong>{summary.accountCount}</strong></div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Transactions</span><strong>{summary.transactionCount}</strong></div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Review items</span><strong>{summary.reviewItemCount}</strong></div>
-        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Source files</span><strong>{sourceLabel(summary.sourceFileStatus)}</strong>{summary.sourceFileStatus !== 'yes' && <span className="block text-[10px] text-amber-700 mt-1">Source files not included in this backup. Metadata restored. Original files must be re-uploaded or restored from a full archive. Extracted text must be regenerated from the original source file.</span>}</div>
+        <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">Source files</span><strong>{sourceLabel(summary.sourceFileStatus)}</strong>{summary.sourceFileStatus !== 'yes' && <span className="block text-[10px] text-amber-700 mt-1">Source files not included in this backup. Document information restored. Original files must be re-uploaded or restored from a full archive. Extracted text must be regenerated from the original source file.</span>}</div>
         <div className="bg-slate-50 rounded-lg p-2"><span className="block text-slate-400 text-[10px] uppercase">County</span><strong>{summary.county || 'Not set'}</strong></div>
       </div>
       <button onClick={onAction} className="w-full sm:w-auto bg-slate-950 hover:bg-slate-800 text-white font-bold text-xs px-5 py-3 rounded-xl transition-colors">{actionLabel}</button>
@@ -977,7 +991,7 @@ export default function App() {
                 <div className="space-y-1.5">
                   <h4 className="font-bold text-emerald-400 uppercase text-[11px] tracking-wide font-mono">2. Safe Editing Rules</h4>
                   <p className="text-slate-400 text-[11px]">
-                    Always review and verify differentials before saving overrides. Ensure manual category changes, audit note additions, and metadata classifications are fully certified under the 'Needs Review' checklist prior to export.
+                    Always review and verify differentials before saving overrides. Ensure manual category changes, audit note additions, and document classifications are fully certified under the 'Needs Review' checklist prior to export.
                   </p>
                 </div>
                 
