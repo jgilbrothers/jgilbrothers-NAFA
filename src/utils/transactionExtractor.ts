@@ -45,6 +45,17 @@ const parseAmount = (value: string): number => {
 
 const findTransactionDates = (line: string): string[] => [...line.matchAll(new RegExp(datePattern.source, 'g'))].map(m => m[0]);
 
+const getLeadingDateColumns = (line: string): { postedDate: string; effectiveDate?: string; hasDescriptionDate: boolean } | undefined => {
+  const leading = line.match(/^\s*(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)(?:\s+(\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?))?/);
+  if (!leading) return undefined;
+  const remainingAfterLeadingDates = line.slice(leading[0].length);
+  return {
+    postedDate: leading[1],
+    effectiveDate: leading[2],
+    hasDescriptionDate: datePattern.test(remainingAfterLeadingDates),
+  };
+};
+
 const inferAmountColumns = (line: string, amounts: string[]): { amount: number; runningBalance?: number; reason?: string } => {
   if (amounts.length === 1) return { amount: parseAmount(amounts[0]) };
 
@@ -163,8 +174,10 @@ export function extractTransactionCandidates(
       const clean = line.trim();
       if (clean.length < 8) return;
       const dateMatches = findTransactionDates(clean);
-      const dateMatch = dateMatches[0];
-      const effectiveDate = dateMatches.length > 1 ? dateMatches[1] : undefined;
+      const leadingDates = getLeadingDateColumns(clean);
+      const dateMatch = leadingDates?.postedDate || dateMatches[0];
+      const effectiveDate = leadingDates?.effectiveDate;
+      const hasUnsafeDescriptionDate = Boolean(!effectiveDate && leadingDates?.hasDescriptionDate);
       const amountMatches = clean.match(moneyPattern) || [];
       if (!dateMatch || amountMatches.length === 0) return;
 
@@ -188,6 +201,7 @@ export function extractTransactionCandidates(
       if (!Number.isFinite(amount) || amount === 0) reviewReasons.push('unclear amount');
       if (direction.reason) reviewReasons.push(direction.reason);
       if (inferredAmounts.reason) reviewReasons.push(inferredAmounts.reason);
+      const note = hasUnsafeDescriptionDate ? 'Additional date found in description; verify transaction date' : undefined;
 
       const needsReview = reviewReasons.length > 0 || direction.type === 'unknown';
       candidates.push({
@@ -206,6 +220,7 @@ export function extractTransactionCandidates(
         confidenceScore: needsReview ? 0.55 : effectiveDate ? 0.9 : 0.86,
         needsReview,
         reviewReason: reviewReasons.join('; ') || (normalizedDate.inferredYear ? 'year inferred from statement period' : undefined),
+        note,
       });
     });
   });
