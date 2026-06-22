@@ -250,14 +250,43 @@ export default function DocumentsView({
   };
 
   const handleImportPdf = () => {
-    const selectedAcc = accounts.find(a => a.id === pdfAccount);
+    if (pdfParsedRows.length === 0) {
+      setPdfErrorMessage('No parsed rows to import. Extract information first.');
+      return;
+    }
+    const linkedDoc = selectedReadableDocId ? documents.find(d => d.id === selectedReadableDocId) : undefined;
+    if (selectedReadableDocId && !linkedDoc) {
+      setSelectedReadableDocId('');
+      setPdfErrorMessage('The selected source document is no longer available. Select an uploaded document again or clear the selection before importing pasted text.');
+      return;
+    }
+
+    const selectedAcc = accounts.find(a => a.id === pdfAccount || a.id === linkedDoc?.account_id);
     const suffix = pdfSuffix || selectedAcc?.account_suffix || '9955';
     const isLowConfidence = pdfParsedRows.length === 0 || forcePdfReview;
-    const filename = `ParsedPDF_${pdfInstitution.replace(/\s+/g, '')}_*${suffix}.pdf`;
-    const docId = `DOC-PDF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    // 1. Synthesize DocumentRecord
-    const newDoc: DocumentRecord = {
+    const docId = linkedDoc?.id || `DOC-PDF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const filename = linkedDoc?.filename || `ParsedPDF_${pdfInstitution.replace(/\s+/g, '')}_*${suffix}.pdf`;
+    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const importedCount = pdfParsedRows.length;
+    const documentUpdates: DocumentRecord = linkedDoc ? {
+      ...linkedDoc,
+      file_type: linkedDoc.file_type || pdfDocType,
+      ocr_status: isLowConfidence ? 'Low Confidence' : 'Success',
+      ocr_confidence: isLowConfidence ? 0.65 : Math.max(linkedDoc.ocr_confidence || 0, 0.95),
+      account_id: pdfAccount || linkedDoc.account_id,
+      institution_name: pdfInstitution || linkedDoc.institution_name || selectedAcc?.institution_name || 'Generic Bank',
+      statement_period: pdfPeriod || linkedDoc.statement_period,
+      processing_status: isLowConfidence ? 'Requires Verification' : 'Completed',
+      user_notes: linkedDoc.user_notes || `Structured PDF Text Import (Extracted Suffix *${suffix})`,
+      type_detected: true,
+      text_read: true,
+      text_extraction_status: linkedDoc.text_extraction_status === 'failed' ? 'succeeded' : (linkedDoc.text_extraction_status || 'succeeded'),
+      extracted_text_available: linkedDoc.extracted_text_available || Boolean(pdfText.trim()),
+      transactions_extracted: true,
+      transaction_candidate_count: importedCount,
+      needs_review_transaction_count: forcePdfReview ? importedCount : 0,
+      confirmed_transaction_count: existingConfirmedCount + importedCount,
+    } : {
       id: docId,
       filename,
       upload_timestamp: new Date().toISOString(),
@@ -272,34 +301,39 @@ export default function DocumentsView({
       source_file_status: 'metadata_only',
       type_detected: true,
       text_read: true,
-      transactions_extracted: pdfParsedRows.length > 0
+      text_extraction_status: 'succeeded',
+      extracted_text_available: Boolean(pdfText.trim()),
+      transactions_extracted: true,
+      transaction_candidate_count: importedCount,
+      needs_review_transaction_count: forcePdfReview ? importedCount : 0,
+      confirmed_transaction_count: importedCount,
     };
 
-    // 2. Synthesize Transactions
-    const txs: Transaction[] = pdfParsedRows.map((row, index) => {
-      return {
-        transaction_id: `TX-PDF-${docId.replace('DOC-PDF-', '')}-${index + 1}`,
-        transaction_date: row.date,
-        raw_description: row.description,
-        clean_vendor_name: row.description.split(/\s+/).slice(0, 3).join(' '),
-        amount: row.amount,
-        transaction_type: row.type,
-        processing_method: 'ACH',
-        card_or_account_suffix: suffix,
-        category: 'Miscellaneous',
-        is_pending: false,
-        running_balance: row.runningBalance,
-        source_document_id: docId,
-        confidence_score: isLowConfidence ? 0.65 : row.confidence,
-        duplicate_status: undefined,
-        transfer_status: undefined
-      };
-    });
+    const safeDocId = docId.replace(/[^A-Z0-9]/gi, '');
+    const txs: Transaction[] = pdfParsedRows.map((row, index) => ({
+      transaction_id: `TX-PDF-${safeDocId}-${index + 1}`,
+      transaction_date: row.date,
+      raw_description: row.description,
+      clean_vendor_name: row.description.split(/\s+/).slice(0, 3).join(' '),
+      amount: row.amount,
+      transaction_type: row.type,
+      processing_method: 'ACH',
+      card_or_account_suffix: suffix,
+      category: 'Miscellaneous',
+      is_pending: false,
+      running_balance: row.runningBalance,
+      source_document_id: docId,
+      confidence_score: isLowConfidence ? 0.65 : row.confidence,
+      duplicate_status: undefined,
+      transfer_status: undefined
+    }));
 
     if (onImportTransactions) {
-      onImportTransactions(txs, newDoc);
+      onImportTransactions(txs, documentUpdates);
+    } else if (!linkedDoc) {
+      onAddDocument(documentUpdates);
     } else {
-      onAddDocument(newDoc);
+      onUpdateDocument?.(docId, documentUpdates);
     }
 
     // Reset workflow states
@@ -380,13 +414,38 @@ export default function DocumentsView({
       setCsvErrorMessage('No parsed rows to import. Match columns first.');
       return;
     }
-    const selectedAcc = accounts.find(a => a.id === csvAccount);
-    const suffix = selectedAcc ? selectedAcc.account_suffix : '4321';
-    const filename = `CSV_Import_${selectedAcc?.account_name || 'Statement'}_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
-    const docId = `DOC-CSV-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const linkedDoc = selectedCsvDocId ? documents.find(d => d.id === selectedCsvDocId) : undefined;
+    if (selectedCsvDocId && !linkedDoc) {
+      setSelectedCsvDocId('');
+      setCsvErrorMessage('The selected spreadsheet document is no longer available. Select an uploaded spreadsheet again or clear the selection before importing pasted rows.');
+      return;
+    }
 
-    // 1. Synthesize DocumentRecord
-    const newDoc: DocumentRecord = {
+    const selectedAcc = accounts.find(a => a.id === csvAccount || a.id === linkedDoc?.account_id);
+    const suffix = selectedAcc ? selectedAcc.account_suffix : '4321';
+    const docId = linkedDoc?.id || `DOC-CSV-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    const filename = linkedDoc?.filename || `CSV_Import_${selectedAcc?.account_name || 'Statement'}_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
+    const importedCount = csvParsedRows.length;
+    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const documentUpdates: DocumentRecord = linkedDoc ? {
+      ...linkedDoc,
+      file_type: linkedDoc.file_type || csvDocType,
+      ocr_status: routeToReviewQueue ? 'Low Confidence' : 'Success',
+      ocr_confidence: routeToReviewQueue ? 0.65 : Math.max(linkedDoc.ocr_confidence || 0, 0.98),
+      account_id: csvAccount || linkedDoc.account_id,
+      institution_name: csvInstitution || linkedDoc.institution_name || selectedAcc?.institution_name || 'Generic Bank',
+      statement_period: csvPeriod || linkedDoc.statement_period,
+      processing_status: routeToReviewQueue ? 'Requires Verification' : 'Completed',
+      user_notes: linkedDoc.user_notes || 'CSV/text file imported from uploaded source document',
+      type_detected: true,
+      text_read: true,
+      text_extraction_status: linkedDoc.text_extraction_status || 'succeeded',
+      extracted_text_available: linkedDoc.extracted_text_available || Boolean(csvText.trim()),
+      transactions_extracted: true,
+      transaction_candidate_count: importedCount,
+      needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
+      confirmed_transaction_count: existingConfirmedCount + importedCount,
+    } : {
       id: docId,
       filename,
       upload_timestamp: new Date().toISOString(),
@@ -401,10 +460,15 @@ export default function DocumentsView({
       source_file_status: 'metadata_only',
       type_detected: true,
       text_read: true,
-      transactions_extracted: csvParsedRows.length > 0
+      text_extraction_status: 'succeeded',
+      extracted_text_available: Boolean(csvText.trim()),
+      transactions_extracted: true,
+      transaction_candidate_count: importedCount,
+      needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
+      confirmed_transaction_count: importedCount,
     };
 
-    // 2. Synthesize Transactions
+    const safeDocId = docId.replace(/[^A-Z0-9]/gi, '');
     const txs: Transaction[] = csvParsedRows.map((row, index) => {
       const rawDate = row[columnMapping.dateIdx] || new Date().toISOString().substring(0, 10);
       const rawDesc = row[columnMapping.descIdx] || 'Unidentified merchant column';
@@ -417,7 +481,7 @@ export default function DocumentsView({
       const amount = Math.abs(rawAmount);
 
       return {
-        transaction_id: `TX-CSV-${docId.replace('DOC-CSV-', '')}-${index + 1}`,
+        transaction_id: `TX-CSV-${safeDocId}-${index + 1}`,
         transaction_date: rawDate,
         raw_description: rawDesc,
         clean_vendor_name: rawDesc.split(/\s+/).slice(0, 3).join(' '),
@@ -435,9 +499,11 @@ export default function DocumentsView({
     });
 
     if (onImportTransactions) {
-      onImportTransactions(txs, newDoc);
+      onImportTransactions(txs, documentUpdates);
+    } else if (!linkedDoc) {
+      onAddDocument(documentUpdates);
     } else {
-      onAddDocument(newDoc);
+      onUpdateDocument?.(docId, documentUpdates);
     }
 
     // Reset Import panel
@@ -547,7 +613,12 @@ export default function DocumentsView({
   const readSelectedDocumentText = async () => {
     const doc = documents.find(d => d.id === selectedReadableDocId);
     if (!doc) {
-      setPdfErrorMessage('Choose an uploaded document to read.');
+      if (selectedReadableDocId) {
+        setSelectedReadableDocId('');
+        setPdfErrorMessage('The selected source document is no longer available. Select an uploaded document again.');
+      } else {
+        setPdfErrorMessage('Choose an uploaded document to read.');
+      }
       return;
     }
     setPdfParsedRows([]);
@@ -584,9 +655,15 @@ export default function DocumentsView({
       return;
     }
     const spreadsheetDocs = documents.filter(isSpreadsheetDocument);
+    const docExists = documents.some(d => d.id === selectedCsvDocId);
     const doc = spreadsheetDocs.find(d => d.id === selectedCsvDocId);
     if (!doc) {
-      setCsvErrorMessage('No uploaded spreadsheet files found. Upload a CSV or paste rows manually.');
+      if (!docExists) {
+        setSelectedCsvDocId('');
+        setCsvErrorMessage('The selected spreadsheet document is no longer available. Select an uploaded spreadsheet again.');
+      } else {
+        setCsvErrorMessage('No uploaded spreadsheet files found. Upload a CSV or paste rows manually.');
+      }
       return;
     }
     setCsvParsedRows([]);
@@ -997,6 +1074,7 @@ Files are stored in this browser’s local storage for this device and website. 
                   </select>
                   {documents.filter(isSpreadsheetDocument).length === 0 && <p className="text-[10px] text-amber-700">No uploaded spreadsheet files found. Upload a CSV or paste rows manually.</p>}
                   <button type="button" onClick={importSelectedSpreadsheet} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">Import Selected Spreadsheet</button>
+                  <p className="text-[10px] text-emerald-800 font-semibold">{documents.find(doc => doc.id === selectedCsvDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedCsvDocId)?.filename}` : 'Pasted rows will create a document record because no source file is selected.'}</p>
                 </div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Spreadsheet Rows</label>
                 <p className="text-[10px] text-slate-500">Use this when you copied rows from a bank CSV or spreadsheet. This does not read PDFs.</p>
@@ -1239,6 +1317,7 @@ Files are stored in this browser’s local storage for this device and website. 
                     {documents.filter(isReadableDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
                   </select>
                   <button type="button" onClick={readSelectedDocumentText} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
+                  <p className="text-[10px] text-indigo-800 font-semibold">{documents.find(doc => doc.id === selectedReadableDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedReadableDocId)?.filename}` : 'Pasted text will create a document record because no source file is selected.'}</p>
                 </div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Text Manually</label>
                 <p className="text-[10px] text-slate-500">Use this only if automatic reading does not work.</p>
