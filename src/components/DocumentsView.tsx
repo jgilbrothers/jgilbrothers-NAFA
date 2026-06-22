@@ -883,7 +883,7 @@ export default function DocumentsView({
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       if (result.error) setErrorNotification(result.error);
-      else setSuccessNotification(`Text read successfully. Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ' Fallback parser warning: pdfjs-dist was not installable in this environment.' : ''}`);
+      else setSuccessNotification(`Text read successfully. Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
     } catch (err: any) {
       const message = `${err?.message || 'Text extraction failed'} This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.`;
       const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'Failed', ocr_confidence: 0, processing_status: 'Requires Verification' };

@@ -51,8 +51,8 @@ const splitApproximatePages = (raw: string, text: string, pageCount: number): st
     const pageTexts = pageMarkers.map((start, index) => {
       const end = pageMarkers[index + 1] || raw.length;
       return extractTextFragments(raw.slice(start, end));
-    }).filter(Boolean);
-    if (pageTexts.length) return pageTexts;
+    });
+    if (pageTexts.length === pageCount && pageTexts.every(page => page.trim().length > 0)) return pageTexts;
   }
   const perPageSize = Math.max(1, Math.ceil(text.length / Math.max(pageCount, 1)));
   return Array.from({ length: pageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);

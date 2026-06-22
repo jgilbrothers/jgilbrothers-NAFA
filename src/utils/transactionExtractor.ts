@@ -29,7 +29,8 @@ export interface TransactionExtractionContext {
 
 const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?|[-+]?\$?\(?\d+\.\d{2}\)?-?)/g;
 const datePattern = /\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
-const shortDatePattern = /^\d{1,2}\/\d{1,2}$/;
+const shortDatePattern = /^\d{1,2}[\/-]\d{1,2}$/;
+const datedWithYearPattern = /^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/;
 const balanceWords = /\b(balance|available|previous|ending|beginning|total|summary|minimum payment|interest charged)\b/i;
 const debitClues = /\b(payment to|online payment to|ach payment to|bill pay|payment sent|debit card payment|pos|purchase|withdrawal|debit|debit card|atm|check|share draft|fee|secu card|usaa debit)\b/i;
 const creditClues = /\b(payment received|deposit|direct deposit|payroll|refund|credit|reversal|cashback|interest paid|mobile deposit|ach credit|remote deposit)\b/i;
@@ -45,23 +46,29 @@ const parseAmount = (value: string): number => {
 const findTransactionDates = (line: string): string[] => [...line.matchAll(new RegExp(datePattern.source, 'g'))].map(m => m[0]);
 
 const inferAmountColumns = (line: string, amounts: string[]): { amount: number; runningBalance?: number; reason?: string } => {
-  const lower = line.toLowerCase();
   if (amounts.length === 1) return { amount: parseAmount(amounts[0]) };
 
   const parsed = amounts.map(parseAmount);
-  const debitCreditBalance = lower.match(/(?:debit|withdrawal|paid out)\s+(?:credit|deposit|paid in)\s+(?:balance)/i);
-  if (debitCreditBalance && amounts.length >= 3) {
-    const debit = Math.abs(parsed[0]);
-    const credit = Math.abs(parsed[1]);
-    const runningBalance = Math.abs(parsed[2]);
-    if (debit > 0 && credit === 0) return { amount: debit, runningBalance };
-    if (credit > 0 && debit === 0) return { amount: credit, runningBalance };
+  if (amounts.length >= 3) {
+    const first = Math.abs(parsed[0]);
+    const second = Math.abs(parsed[1]);
+    const runningBalance = Math.abs(parsed[parsed.length - 1]);
+
+    if (first === 0 && second > 0) return { amount: parsed[1], runningBalance };
+    if (second === 0 && first > 0) return { amount: parsed[0], runningBalance };
+    if (first > 0 && second > 0) {
+      return {
+        amount: parsed[0],
+        runningBalance,
+        reason: 'both debit and credit amount columns are non-zero; verify transaction direction',
+      };
+    }
+    return { amount: 0, runningBalance, reason: 'transaction amount columns are zero or unclear' };
   }
 
   return {
     amount: parsed[0],
     runningBalance: Math.abs(parsed[amounts.length - 1]),
-    reason: amounts.length > 2 ? 'multiple amount columns detected; verify debit/credit/balance mapping' : undefined,
   };
 };
 
@@ -71,7 +78,7 @@ const expandYear = (year: string): number => {
 };
 
 const parseStatementBounds = (statementPeriod?: string): { startMonth: number; startYear: number; endMonth: number; endYear: number } | undefined => {
-  const matches = [...(statementPeriod || '').matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g)];
+  const matches = [...(statementPeriod || '').matchAll(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\b/g)];
   if (matches.length < 2) return undefined;
   const startMonth = Number(matches[0][1]);
   const startYear = expandYear(matches[0][3]);
@@ -93,8 +100,14 @@ const inferYearForShortDate = (month: number, statementPeriod?: string): { year?
 };
 
 const normalizeTransactionDate = (rawDate: string, statementPeriod?: string): { date: string; inferredYear: boolean; needsReview: boolean; reason?: string } => {
+  if (datedWithYearPattern.test(rawDate)) {
+    const [rawMonth, rawDay, rawYear] = rawDate.split(/[\/-]/);
+    const month = rawMonth.padStart(2, '0');
+    const day = rawDay.padStart(2, '0');
+    return { date: `${expandYear(rawYear)}-${month}-${day}`, inferredYear: false, needsReview: false };
+  }
   if (!shortDatePattern.test(rawDate)) return { date: rawDate, inferredYear: false, needsReview: false };
-  const [rawMonth, rawDay] = rawDate.split('/');
+  const [rawMonth, rawDay] = rawDate.split(/[\/-]/);
   const inferred = inferYearForShortDate(Number(rawMonth), statementPeriod);
   if (!inferred.year) {
     return { date: rawDate, inferredYear: false, needsReview: true, reason: inferred.reason || 'Short date year could not be safely inferred' };
