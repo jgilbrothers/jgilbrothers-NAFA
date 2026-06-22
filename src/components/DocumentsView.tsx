@@ -115,7 +115,7 @@ export default function DocumentsView({
   // Intelligent Text-based PDF Structured Heuristics Reader
   const handleParsePdf = () => {
     if (!pdfText.trim()) {
-      setPdfErrorMessage('Choose an uploaded document first, or use Advanced: Paste Text Manually if automatic reading does not work.');
+      setPdfErrorMessage('Choose an uploaded document first, or use manual fallback only if automatic PDF reading fails.');
       return;
     }
 
@@ -600,11 +600,13 @@ export default function DocumentsView({
 
   const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
     const labels = [doc.source_file_status === 'stored' ? 'File Stored' : 'File Not Stored'];
-    if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') labels.push('OCR Needed');
-    else labels.push(doc.text_read || doc.extracted_text_available ? 'Text Read' : 'Text Not Read');
-    if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) labels.push('Transactions Imported');
-    else if ((doc.transaction_candidate_count || 0) > 0 || (doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions Need Review');
-    else labels.push('Transactions Not Extracted');
+    if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') labels.push('Text: Failed / Needs OCR');
+    else labels.push(doc.text_read || doc.extracted_text_available ? 'Text: Read' : 'Text: Not Read');
+    labels[0] = doc.source_file_status === 'stored' ? 'File: Stored' : doc.source_file_status === 'metadata_only' ? 'File: Metadata Only' : 'File: Not Stored';
+    if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) labels.push('Transactions: Imported');
+    else if ((doc.transaction_candidate_count || 0) > 0) labels.push('Transactions: Candidates Found');
+    else if ((doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions: Needs Review');
+    else labels.push('Transactions: Not Extracted');
     return labels;
   };
 
@@ -881,9 +883,9 @@ export default function DocumentsView({
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       if (result.error) setErrorNotification(result.error);
-      else setSuccessNotification(`Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.`);
+      else setSuccessNotification(`Text read successfully. Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
     } catch (err: any) {
-      const message = `${err?.message || 'Text extraction failed'} This PDF may contain compressed or image-based text that the local lightweight reader cannot extract yet. OCR or an improved PDF reader will be needed in a later phase.`;
+      const message = `${err?.message || 'Text extraction failed'} This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.`;
       const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'Failed', ocr_confidence: 0, processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
@@ -913,7 +915,8 @@ export default function DocumentsView({
     const updates: Partial<DocumentRecord> = { transactions_extracted: candidates.length > 0, transaction_candidate_count: candidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id).length };
     onUpdateDocument?.(doc.id, updates);
     setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-    setSuccessNotification(candidates.length ? `Found ${candidates.length} transaction candidate(s). Review before importing.` : 'No transactions detected. This document needs review.');
+    if (candidates.length) setSuccessNotification(`Found ${candidates.length} transaction candidate(s). Review before importing.`);
+    else setErrorNotification('No transaction rows detected from extracted text. You can paste text manually only if automatic PDF reading fails, or mark the document for later OCR review.');
   };
 
   const importConfirmedCandidates = (doc: DocumentRecord) => {
@@ -1304,7 +1307,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </div>
             <div>
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Read Document Text</h4>
-              <p className="text-[10px] text-slate-500 mt-0.5">Choose an uploaded document first. Paste text manually only if automatic reading does not work.</p>
+              <p className="text-[10px] text-slate-500 mt-0.5">Choose an uploaded document first. Manual fallback: paste text only if automatic PDF reading fails.</p>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2 py-0.5 rounded-md uppercase">
@@ -1325,11 +1328,11 @@ Files are stored in this browser’s local storage for this device and website. 
                   <button type="button" onClick={readSelectedDocumentText} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
                   <p className="text-[10px] text-indigo-800 font-semibold">{documents.find(doc => doc.id === selectedReadableDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedReadableDocId)?.filename}` : 'This will create a document record because no uploaded source file is selected.'}</p>
                 </div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase">Advanced: Paste Text Manually</label>
-                <p className="text-[10px] text-slate-500">Use this only if automatic reading does not work.</p>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase">Manual fallback: paste text only if automatic PDF reading fails.</label>
+                <p className="text-[10px] text-slate-500">Use this only if automatic PDF reading fails. It creates a metadata-only document only when no uploaded source document is selected.</p>
                 <textarea 
                   rows={6}
-                  placeholder="Paste document text only if automatic reading does not work."
+                  placeholder="Manual fallback: paste text only if automatic PDF reading fails."
                   value={pdfText}
                   onChange={e => setPdfText(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded p-2.5 text-slate-900 font-mono text-[11px] outline-hidden focus:border-indigo-400 focus:bg-white"
@@ -1734,8 +1737,8 @@ Files are stored in this browser’s local storage for this device and website. 
                   {getProgressLabels(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length).map(label => <span key={label} className="bg-white border border-emerald-200 text-emerald-800 rounded px-2 py-0.5 text-[9px] font-bold uppercase">{label}</span>)}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Source File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Document Text</span>{selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read successfully' : selectedDocForPreview.text_extraction_status === 'failed' || selectedDocForPreview.text_extraction_status === 'needs_review' ? 'Failed / OCR needed' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read' : selectedDocForPreview.text_extraction_status === 'failed' ? 'Failed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'Needs OCR' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Transaction Status:</strong> {getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</p>
@@ -1953,10 +1956,10 @@ Files are stored in this browser’s local storage for this device and website. 
                     <h4 className="text-[10.5px] font-black uppercase text-slate-900 tracking-wider">Review Extracted Transactions</h4>
                     <button type="button" onClick={() => importConfirmedCandidates(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 text-[10px] font-bold uppercase">Import Confirmed Transactions</button>
                   </div>
-                  <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals. Source page numbers are approximate with the lightweight local reader.</div>
+                  <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals. Candidate fields include posted/effective date, description, merchant, amount, debit/credit direction, balance, source document, source page/line, confidence, and review reason.</div>
                   <div className="max-h-72 overflow-auto">
-                    <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
-                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td>{c.sourcePageApproximate ? 'Page approx.' : c.sourcePage ? `Page ${c.sourcePage}` : 'Line only'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
+                    <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Posted</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Balance</th><th>Conf.</th><th>Status</th><th>Source</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
+                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td>{c.postedDate || '—'}</td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.runningBalance !== undefined ? `$${c.runningBalance.toFixed(2)}` : '—'}</td><td>{Math.round(c.confidenceScore * 100)}%</td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td>{c.sourcePageApproximate ? 'Page approx.' : c.sourcePage ? `Page ${c.sourcePage}` : 'Line only'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
                     </tbody></table>
                   </div>
                 </div>
