@@ -70,7 +70,7 @@ export default function NeedsReviewQueue({
                     <div className="min-w-0">
                       <p className="text-xs font-bold font-mono text-slate-900 truncate">{doc.filename}</p>
                       <p className="text-[10px] text-slate-500 mt-1 font-sans">
-                        Read Quality: <strong className="font-mono">{Math.round(doc.ocr_confidence * 100)}%</strong>
+                        Read Quality: <strong className="font-mono">{Math.round((typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) * 100)}%</strong>
                       </p>
                     </div>
                   </div>

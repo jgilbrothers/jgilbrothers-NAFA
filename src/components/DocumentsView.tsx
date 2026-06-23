@@ -1032,9 +1032,22 @@ export default function DocumentsView({
       source_document_id: doc.id,
       confidence_score: c.confidenceScore,
     }));
-    onImportTransactions?.(txs, { ...doc, confirmed_transaction_count: (doc.confirmed_transaction_count || 0) + txs.length, transactions_extracted: true });
-    setTransactionCandidates(prev => prev.filter(c => !confirmed.includes(c)));
-    setSuccessNotification(`Imported ${txs.length} confirmed transaction(s).`);
+    const remainingCandidates = transactionCandidates.filter(c => !confirmed.includes(c));
+    const remainingActiveCandidates = remainingCandidates.filter(c => !c.excluded);
+    const remainingNeedsReview = remainingActiveCandidates.filter(c => c.needsReview || c.transactionType === 'unknown').length;
+    const confirmedCount = (doc.confirmed_transaction_count || transactions.filter(t => t.source_document_id === doc.id).length) + txs.length;
+    const documentUpdates: Partial<DocumentRecord> = {
+      confirmed_transaction_count: confirmedCount,
+      transactions_extracted: confirmedCount > 0 || remainingActiveCandidates.length > 0,
+      transaction_candidate_count: remainingActiveCandidates.length,
+      needs_review_transaction_count: remainingNeedsReview,
+      processing_status: remainingNeedsReview > 0 ? 'Requires Verification' : 'Completed',
+    };
+    onImportTransactions?.(txs, { ...doc, ...documentUpdates });
+    onUpdateDocument?.(doc.id, documentUpdates);
+    setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...documentUpdates } : prev);
+    setTransactionCandidates(remainingCandidates);
+    setSuccessNotification(`Imported ${txs.length} confirmed transaction(s).${remainingNeedsReview === 0 ? ' Document review counts cleared.' : ` ${remainingNeedsReview} candidate(s) still need review.`}`);
   };
 
   const filteredDocs = documents.filter(doc => 
@@ -1623,7 +1636,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredDocs.map((doc) => {
-                const isUnderReview = doc.ocr_status === 'Low Confidence' || (doc.ocr_confidence ?? 0) < 0.85;
+                const isUnderReview = doc.ocr_status === 'Low Confidence' || (typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) < 0.85;
 
                 // Dynamically fetch extracted rows count & count matches
                 const rowCount = transactions.filter(t => t.source_document_id === doc.id).length;
@@ -1677,14 +1690,14 @@ Files are stored in this browser’s local storage for this device and website. 
                           <>
                             <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
                             <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1 rounded animate-pulse">
-                              LOW CONF ({Math.round((doc.ocr_confidence ?? 0) * 100)}%)
+                              LOW CONF ({Math.round((typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) * 100)}%)
                             </span>
                           </>
                         ) : (
                           <>
                             <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
                             <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1 rounded">
-                              EXCELLENT ({Math.round((doc.ocr_confidence ?? 0) * 100)}%)
+                              EXCELLENT ({Math.round((typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) * 100)}%)
                             </span>
                           </>
                         )}
@@ -1816,7 +1829,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <div>
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Detection Confidence</span>
                   <span className="font-bold text-emerald-600 font-mono">
-                    {selectedDocForPreview.text_read ? `${Math.round((selectedDocForPreview.ocr_confidence ?? 0) * 100)}% (${selectedDocForPreview.ocr_status})` : 'Filename detection only — document text has not been read yet.'}
+                    {selectedDocForPreview.text_read ? `${Math.round((typeof selectedDocForPreview.ocr_confidence === 'number' ? selectedDocForPreview.ocr_confidence : 0) * 100)}% (${selectedDocForPreview.ocr_status})` : 'Filename detection only — document text has not been read yet.'}
                   </span>
                 </div>
               </div>
@@ -2013,7 +2026,7 @@ Files are stored in this browser’s local storage for this device and website. 
                     <br />
                     File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
                     <br />
-                    Detection Confidence: <strong className="text-emerald-400">{Math.round((selectedDocForPreview.ocr_confidence ?? 0) * 100)}%</strong>.
+                    Detection Confidence: <strong className="text-emerald-400">{Math.round((typeof selectedDocForPreview.ocr_confidence === 'number' ? selectedDocForPreview.ocr_confidence : 0) * 100)}%</strong>.
                     <br />
                     Text source: <strong className="text-emerald-500">{selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'OCR' : selectedDocForPreview.text_source === 'pdf' ? 'PDF text' : selectedDocForPreview.text_read ? 'Read' : 'Not read yet'}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
                     <br />

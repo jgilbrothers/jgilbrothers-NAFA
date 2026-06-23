@@ -440,6 +440,8 @@ export default function App() {
     if (updates.text_extraction_status === 'failed' || updates.text_extraction_status === 'needs_review' || (updates.needs_review_transaction_count || 0) > 0 || (updates.transaction_candidate_count === 0 && updates.transactions_extracted === false)) {
       const reason = updates.text_extraction_error || (updates.needs_review_transaction_count ? `${updates.needs_review_transaction_count} transaction candidates need review` : 'No transactions detected');
       setReconItems(prev => prev.some(item => item.id === `REC-DOC-${docId}`) ? prev : [...prev, { id: `REC-DOC-${docId}`, type: 'Low_Confidence', title: updates.text_extraction_status === 'failed' ? 'Text extraction failed' : 'Document extraction needs review', description: reason, severity: 'medium', documentId: docId, status: 'Unresolved' }]);
+    } else if (updates.needs_review_transaction_count === 0 && updates.transaction_candidate_count === 0 && updates.confirmed_transaction_count !== undefined) {
+      setReconItems(prev => prev.map(item => item.id === `REC-DOC-${docId}` ? { ...item, status: 'Resolved' } : item));
     }
     appendAuditLog('UPDATE_DOCUMENT', `Updated document metadata for ${docId}: ${JSON.stringify(updates)}`, 'info');
   };

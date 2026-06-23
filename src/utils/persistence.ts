@@ -104,7 +104,7 @@ export function normalizeImportedWorkspaceState(state: WorkspaceState): Workspac
       ocr_status: 'not_started',
       ocr_read_at: undefined,
       ocr_error: undefined,
-      ocr_confidence: undefined,
+      ocr_confidence: 0,
       transaction_candidate_count: 0,
       needs_review_transaction_count: 0,
     })),
