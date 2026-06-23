@@ -614,7 +614,7 @@ export default function DocumentsView({
   const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
     const labels = [doc.source_file_status === 'stored' ? 'File Stored' : 'File Not Stored'];
     if (doc.ocr_status === 'running') labels.push('Text: OCR Running');
-    else if (doc.text_source === 'ocr' || doc.ocr_text_available) labels.push('Text: OCR');
+    else if (doc.text_source === 'ocr' && doc.ocr_text_available && doc.extracted_text_available) labels.push('Text: OCR');
     else if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'failed' || doc.ocr_status === 'Failed') labels.push('Text: OCR Needed');
     else labels.push(doc.text_read || doc.extracted_text_available ? 'Text: PDF Text' : 'Text: Not Read');
     labels[0] = doc.source_file_status === 'stored' ? 'File: Stored' : doc.source_file_status === 'metadata_only' ? 'File: Metadata Only' : 'File: Not Stored';
@@ -628,7 +628,7 @@ export default function DocumentsView({
   const getTransactionStatusExplanation = (doc: DocumentRecord, rowCount: number) => {
     if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) return 'Imported — confirmed transactions are in the ledger.';
     if ((doc.transaction_candidate_count || 0) > 0 || (doc.needs_review_transaction_count || 0) > 0) return 'Candidates found — review before importing.';
-    if (doc.text_source === 'ocr') return 'Ready to extract — OCR text is available; review candidates before import.';
+    if (doc.text_source === 'ocr' && doc.ocr_text_available && doc.extracted_text_available) return 'Ready to extract — OCR text is available; review candidates before import.';
     if (doc.extracted_text_available || doc.text_read) return 'Ready to extract — document text is available.';
     if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') return doc.text_extraction_error?.toLowerCase().includes('image') || doc.text_extraction_error?.toLowerCase().includes('compressed') ? 'OCR needed — this PDF appears image-based or compressed.' : 'Not extracted — local reader could not find readable text.';
     return 'Not extracted yet — document text has not been read.';
@@ -1623,7 +1623,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredDocs.map((doc) => {
-                const isUnderReview = doc.ocr_status === 'Low Confidence' || doc.ocr_confidence < 0.85;
+                const isUnderReview = doc.ocr_status === 'Low Confidence' || (doc.ocr_confidence ?? 0) < 0.85;
 
                 // Dynamically fetch extracted rows count & count matches
                 const rowCount = transactions.filter(t => t.source_document_id === doc.id).length;
@@ -1677,14 +1677,14 @@ Files are stored in this browser’s local storage for this device and website. 
                           <>
                             <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
                             <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1 rounded animate-pulse">
-                              LOW CONF ({Math.round(doc.ocr_confidence * 100)}%)
+                              LOW CONF ({Math.round((doc.ocr_confidence ?? 0) * 100)}%)
                             </span>
                           </>
                         ) : (
                           <>
                             <CheckCircle className="h-3.5 w-3.5 text-emerald-500" />
                             <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1 rounded">
-                              EXCELLENT ({Math.round(doc.ocr_confidence * 100)}%)
+                              EXCELLENT ({Math.round((doc.ocr_confidence ?? 0) * 100)}%)
                             </span>
                           </>
                         )}
@@ -1816,7 +1816,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <div>
                   <span className="block text-[9px] font-bold text-slate-400 uppercase">Detection Confidence</span>
                   <span className="font-bold text-emerald-600 font-mono">
-                    {selectedDocForPreview.text_read ? `${Math.round(selectedDocForPreview.ocr_confidence * 100)}% (${selectedDocForPreview.ocr_status})` : 'Filename detection only — document text has not been read yet.'}
+                    {selectedDocForPreview.text_read ? `${Math.round((selectedDocForPreview.ocr_confidence ?? 0) * 100)}% (${selectedDocForPreview.ocr_status})` : 'Filename detection only — document text has not been read yet.'}
                   </span>
                 </div>
               </div>
@@ -1828,7 +1828,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' ? 'Read by OCR' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
@@ -1854,8 +1854,8 @@ Files are stored in this browser’s local storage for this device and website. 
                   <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
                   <button type="button" disabled={!previewFileAvailable || ocrBusy} onClick={() => runLocalOcrForDocument(selectedDocForPreview)} className="bg-amber-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> {ocrBusy ? 'OCR running' : 'Run Local OCR'}</button>
                   {(selectedDocForPreview.mime_type?.includes('pdf') || selectedDocForPreview.filename.toLowerCase().endsWith('.pdf')) && <button type="button" disabled={!previewFileAvailable || extractionBusy} onClick={() => readPdfTextFromStoredFile(selectedDocForPreview)} className="bg-indigo-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {extractionBusy ? 'Reading...' : 'Read PDF Text'}</button>}
-                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => setReviewRowsOpen(v => !v)} className="bg-white border border-indigo-200 text-indigo-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' ? 'View OCR Text' : 'View Extracted Text'}</button>}
-                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => extractTransactionsForSelectedDocument(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' ? 'Extract Transactions from OCR Text' : 'Extract Transactions'}</button>}
+                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => setReviewRowsOpen(v => !v)} className="bg-white border border-indigo-200 text-indigo-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'View OCR Text' : 'View Extracted Text'}</button>}
+                  {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => extractTransactionsForSelectedDocument(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'Extract Transactions from OCR Text' : 'Extract Transactions'}</button>}
                 </div>
               </div>
 
@@ -2013,9 +2013,9 @@ Files are stored in this browser’s local storage for this device and website. 
                     <br />
                     File Category Matches: <strong className="text-emerald-400">{selectedDocForPreview.file_type}</strong>.
                     <br />
-                    Detection Confidence: <strong className="text-emerald-400">{Math.round(selectedDocForPreview.ocr_confidence * 100)}%</strong>.
+                    Detection Confidence: <strong className="text-emerald-400">{Math.round((selectedDocForPreview.ocr_confidence ?? 0) * 100)}%</strong>.
                     <br />
-                    Text source: <strong className="text-emerald-500">{selectedDocForPreview.text_source === 'ocr' ? 'OCR' : selectedDocForPreview.text_source === 'pdf' ? 'PDF text' : selectedDocForPreview.text_read ? 'Read' : 'Not read yet'}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
+                    Text source: <strong className="text-emerald-500">{selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'OCR' : selectedDocForPreview.text_source === 'pdf' ? 'PDF text' : selectedDocForPreview.text_read ? 'Read' : 'Not read yet'}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
                     <br />
                     Extracted text length: <strong className="text-emerald-500">{extractedText.length.toLocaleString()}</strong>.
                     {selectedDocForPreview.text_extraction_error && <><br /><span className="text-amber-300">{selectedDocForPreview.text_extraction_error}</span></>}
