@@ -72,6 +72,7 @@ export default function DocumentsView({
   const [searchText, setSearchText] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [selectedDocForPreview, setSelectedDocForPreview] = useState<DocumentRecord | null>(null);
+  const selectedDocForPreviewRef = useRef<DocumentRecord | null>(null);
   const [successNotification, setSuccessNotification] = useState<string | null>(null);
   const [errorNotification, setErrorNotification] = useState<string | null>(null);
   
@@ -88,6 +89,10 @@ export default function DocumentsView({
     const timer = window.setTimeout(() => setErrorNotification(null), 6500);
     return () => window.clearTimeout(timer);
   }, [errorNotification]);
+
+  useEffect(() => {
+    selectedDocForPreviewRef.current = selectedDocForPreview;
+  }, [selectedDocForPreview]);
 
   // CSV paste/import workflow states
   const [csvText, setCsvText] = useState('');
@@ -611,6 +616,11 @@ export default function DocumentsView({
     return hasLocallyStoredFile(doc) && (mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.csv') || lower.endsWith('.txt'));
   };
 
+  const canRunLocalOcr = (doc: DocumentRecord) => {
+    const mime = doc.mime_type || '';
+    return hasLocallyStoredFile(doc) && isImageOcrSupported(mime, doc.filename);
+  };
+
   const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
     const labels = [doc.source_file_status === 'stored' ? 'File Stored' : 'File Not Stored'];
     if (doc.ocr_status === 'running') labels.push('Text: OCR Running');
@@ -931,20 +941,20 @@ export default function DocumentsView({
         setErrorNotification('This document may be too large for local OCR on this device. Laptop or desktop is recommended for large OCR jobs.');
       }
       if (isPdfOcrCandidate(mime, filename)) {
-        throw new Error('Scanned PDF OCR will be added after image OCR is stable. Try exporting the scanned page as PNG/JPG/WebP, then run Local OCR.');
+        throw new Error('OCR for scanned PDFs is not available yet. Try image uploads or wait for scanned PDF OCR support.');
       }
       if (!isImageOcrSupported(mime, filename)) {
         throw new Error('Local OCR currently supports PNG, JPG, JPEG, and WebP images. PDF text extraction remains available for text-based PDFs.');
       }
       const result = await runLocalImageOcr(stored.blob, progress => {
         const pct = typeof progress.progress === 'number' ? ` ${Math.round(progress.progress * 100)}%` : '';
-        setOcrProgress(`OCR running — ${progress.status || 'processing image'}${pct}.`);
+        if (selectedDocForPreviewRef.current?.id === doc.id) setOcrProgress(`OCR running — ${progress.status || 'processing image'}${pct}.`);
       });
       const now = new Date().toISOString();
       if (!(result.text || '').trim()) throw new Error('Local OCR completed but did not find readable text. The image may be too blurry, cropped, or low contrast.');
       const receiptFields = doc.file_type === 'Receipt' ? extractReceiptFieldsFromText(result.text) : undefined;
       await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now, pageMappingApproximate: true });
-      setExtractedText(result.text);
+      if (selectedDocForPreviewRef.current?.id === doc.id) setExtractedText(result.text);
       const lowConfidence = result.status === 'needs_review' || (typeof result.confidence === 'number' && result.confidence < 0.75);
       const updates: Partial<DocumentRecord> = {
         text_read: true,
@@ -969,14 +979,23 @@ export default function DocumentsView({
       };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-      setOcrProgress('OCR completed — text is stored locally.');
+      if (selectedDocForPreviewRef.current?.id === doc.id) setOcrProgress('OCR completed — text is stored locally.');
       setSuccessNotification('Local OCR succeeded. Text source: OCR. Review extracted text and candidates before importing.');
     } catch (err: any) {
       const message = err?.message || LOCAL_OCR_LOAD_ERROR;
-      const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'failed', ocr_text_available: false, ocr_error: message, ocr_confidence: 0, ocr_engine: 'tesseract-cdn', processing_status: 'Requires Verification' };
+      const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
+      const updates: Partial<DocumentRecord> = {
+        ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false, text_extraction_status: 'failed' as const, text_extraction_error: message }),
+        ocr_status: 'failed',
+        ocr_text_available: false,
+        ocr_error: message,
+        ocr_confidence: 0,
+        ocr_engine: 'tesseract-cdn',
+        processing_status: 'Requires Verification',
+      };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-      setOcrProgress('OCR failed.');
+      if (selectedDocForPreviewRef.current?.id === doc.id) setOcrProgress('OCR failed.');
       setErrorNotification(message);
     } finally {
       setOcrBusy(false);
@@ -1847,7 +1866,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
                 {ocrProgress && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2"><strong>OCR:</strong> {ocrProgress}</p>}
                 {selectedDocForPreview.ocr_error && <p className="text-[11px] text-rose-800 bg-rose-50 border border-rose-100 rounded-lg p-2"><strong>OCR failed:</strong> {selectedDocForPreview.ocr_error}</p>}
-                {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">Scanned PDF OCR will be added after image OCR is stable.</p>}
+                {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">OCR for scanned PDFs is not available yet. Try image uploads or wait for scanned PDF OCR support.</p>}
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Transaction Status:</strong> {getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</p>
                 {selectedDocForPreview.text_extraction_status === 'failed' && (
                   <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
@@ -1865,7 +1884,7 @@ Files are stored in this browser’s local storage for this device and website. 
                   <a href="#source-file-preview" onClick={() => { if (!previewFileAvailable) alert('Original source file is not available in this browser.'); }} className={`bg-white border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1 ${!previewFileAvailable ? 'opacity-50 cursor-not-allowed' : ''}`}><Eye className="h-3.5 w-3.5" /> View File</a>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => downloadOriginalFile(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-200 text-emerald-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Download Original</button>
                   <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
-                  <button type="button" disabled={!previewFileAvailable || ocrBusy} onClick={() => runLocalOcrForDocument(selectedDocForPreview)} className="bg-amber-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> {ocrBusy ? 'OCR running' : 'Run Local OCR'}</button>
+                  {canRunLocalOcr(selectedDocForPreview) && <button type="button" disabled={!previewFileAvailable || ocrBusy} onClick={() => runLocalOcrForDocument(selectedDocForPreview)} className="bg-amber-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> {ocrBusy ? 'OCR running' : 'Run Local OCR'}</button>}
                   {(selectedDocForPreview.mime_type?.includes('pdf') || selectedDocForPreview.filename.toLowerCase().endsWith('.pdf')) && <button type="button" disabled={!previewFileAvailable || extractionBusy} onClick={() => readPdfTextFromStoredFile(selectedDocForPreview)} className="bg-indigo-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {extractionBusy ? 'Reading...' : 'Read PDF Text'}</button>}
                   {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => setReviewRowsOpen(v => !v)} className="bg-white border border-indigo-200 text-indigo-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'View OCR Text' : 'View Extracted Text'}</button>}
                   {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => extractTransactionsForSelectedDocument(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'Extract Transactions from OCR Text' : 'Extract Transactions'}</button>}
