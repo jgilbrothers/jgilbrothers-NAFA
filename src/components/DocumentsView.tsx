@@ -882,7 +882,7 @@ export default function DocumentsView({
       const result = await extractPdfText(stored.blob);
       const now = new Date().toISOString();
       if (result.text) {
-        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now });
+        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true });
         setExtractedText(result.text);
       }
       const updates: Partial<DocumentRecord> = {
@@ -943,7 +943,7 @@ export default function DocumentsView({
       const now = new Date().toISOString();
       if (!(result.text || '').trim()) throw new Error('Local OCR completed but did not find readable text. The image may be too blurry, cropped, or low contrast.');
       const receiptFields = doc.file_type === 'Receipt' ? extractReceiptFieldsFromText(result.text) : undefined;
-      await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now });
+      await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now, pageMappingApproximate: true });
       setExtractedText(result.text);
       const lowConfidence = result.status === 'needs_review' || (typeof result.confidence === 'number' && result.confidence < 0.75);
       const updates: Partial<DocumentRecord> = {
@@ -973,7 +973,7 @@ export default function DocumentsView({
       setSuccessNotification('Local OCR succeeded. Text source: OCR. Review extracted text and candidates before importing.');
     } catch (err: any) {
       const message = err?.message || LOCAL_OCR_LOAD_ERROR;
-      const updates: Partial<DocumentRecord> = { ocr_status: 'failed', ocr_text_available: false, ocr_error: message, ocr_confidence: 0, ocr_engine: 'tesseract-cdn', processing_status: 'Requires Verification' };
+      const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'failed', ocr_text_available: false, ocr_error: message, ocr_confidence: 0, ocr_engine: 'tesseract-cdn', processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       setOcrProgress('OCR failed.');
@@ -994,7 +994,7 @@ export default function DocumentsView({
     const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
-      sourcePagesApproximate: doc.text_source === 'ocr',
+      sourcePagesApproximate: doc.text_source === 'ocr' || stored?.pageMappingApproximate === true,
       statementPeriod: doc.statement_period,
     });
     setReviewRowsOpen(true);
@@ -1841,7 +1841,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
                 </div>
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
@@ -1852,10 +1852,10 @@ Files are stored in this browser’s local storage for this device and website. 
                 {selectedDocForPreview.text_extraction_status === 'failed' && (
                   <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
                     <p><strong>File Preview:</strong> {previewFileAvailable ? 'Available' : 'Not Available'}</p>
-                    <p><strong>Text Extraction:</strong> Failed</p>
+                    <p><strong>Text:</strong> {selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Failed'}</p>
                     <p><strong>Reason:</strong> {selectedDocForPreview.text_extraction_error || 'Local reader could not find readable text.'}</p>
                     <p><strong>Transactions:</strong> Not Extracted</p>
-                    <p><strong>Next Step:</strong> OCR may be needed for this document.</p>
+                    <p><strong>Next Step:</strong> {selectedDocForPreview.ocr_status === 'failed' ? 'Review the source file, try a clearer image, or use another extraction method.' : 'OCR may be needed for this document.'}</p>
                   </div>
                 )}
                 {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
@@ -2067,7 +2067,7 @@ Files are stored in this browser’s local storage for this device and website. 
                   <div className="text-[11px] text-slate-600">Confirmed rows are imported only after you press Import Confirmed Transactions. Rows marked Needs Review are not included in totals. Candidate fields include posted/effective date, description, merchant, amount, debit/credit direction, balance, source document, source page/line, confidence, and review reason.</div>
                   <div className="max-h-72 overflow-auto">
                     <table className="w-full text-[10px] font-mono"><thead><tr className="text-left text-slate-400 uppercase"><th>Date</th><th>Posted</th><th>Merchant</th><th>Type</th><th>Amount</th><th>Balance</th><th>Conf.</th><th>Status</th><th>Source</th><th>Action</th></tr></thead><tbody className="divide-y divide-slate-100">
-                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td>{c.postedDate || '—'}</td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.runningBalance !== undefined ? `$${c.runningBalance.toFixed(2)}` : '—'}</td><td>{Math.round(c.confidenceScore * 100)}%</td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td>{c.sourcePageApproximate ? 'Page approx.' : c.sourcePage ? `Page ${c.sourcePage}` : 'Line only'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
+                      {transactionCandidates.map(c => <tr key={c.id}><td><input value={c.transactionDate} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionDate: e.target.value } : x))} className="border rounded p-1 w-20" /></td><td>{c.postedDate || '—'}</td><td><input value={c.cleanMerchantName} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, cleanMerchantName: e.target.value, rawDescription: e.target.value } : x))} className="border rounded p-1 w-40" /></td><td><select value={c.transactionType} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, transactionType: e.target.value as any, needsReview: e.target.value === 'unknown' } : x))} className="border rounded p-1"><option value="debit">debit</option><option value="credit">credit</option><option value="unknown">unknown</option></select></td><td><input type="number" value={c.amount} onChange={e => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, amount: Math.abs(Number(e.target.value) || 0) } : x))} className="border rounded p-1 w-24" /></td><td>{c.runningBalance !== undefined ? `$${c.runningBalance.toFixed(2)}` : '—'}</td><td>{Math.round(c.confidenceScore * 100)}%</td><td>{c.excluded ? 'Excluded' : c.needsReview ? `Needs review: ${c.reviewReason || 'uncertain'}` : 'Confirmed'}</td><td>{c.sourcePageApproximate ? (c.sourcePage ? `Approx. Page ${c.sourcePage}` : 'Approx. page') : c.sourcePage ? `Page ${c.sourcePage}` : 'Line only'}</td><td className="space-x-1"><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: false, reviewReason: undefined, excluded: false } : x))} className="text-emerald-700 font-bold">confirm</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, excluded: true } : x))} className="text-rose-700 font-bold">exclude</button><button onClick={() => setTransactionCandidates(prev => prev.map(x => x.id === c.id ? { ...x, needsReview: true, reviewReason: x.reviewReason || 'marked for manual review' } : x))} className="text-amber-700 font-bold">needs review</button></td></tr>)}
                     </tbody></table>
                   </div>
                 </div>

@@ -8,6 +8,7 @@ export interface PdfTextExtractionResult {
   readStatus: 'readable_text' | 'no_selectable_text' | 'partial_text' | 'failed';
   parser: 'pdfjs-dist' | 'lightweight-fallback';
   warning?: string;
+  pageMappingApproximate?: boolean;
 }
 
 const PDFJS_INSTALL_BLOCKED_WARNING = 'pdfjs-dist could not be installed in this environment: npm install pdfjs-dist returned 403 Forbidden from https://registry.npmjs.org/pdfjs-dist. NAFA Ledger is using the existing lightweight local reader as a visible fallback; scanned, image-based, encrypted, or compressed PDFs may require OCR later.';
@@ -60,7 +61,7 @@ const splitEvenlyOverFullText = (text: string, pageCount: number): string[] => {
   return Array.from({ length: safePageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);
 };
 
-const splitApproximatePages = (raw: string, text: string, pageCount: number): string[] => {
+const splitApproximatePages = (raw: string, text: string, pageCount: number): { pageTexts: string[]; pageMappingApproximate: boolean } => {
   const pageMarkers = [...raw.matchAll(/\/Type\s*\/Page\b/g)].map(m => m.index || 0);
   if (pageMarkers.length > 1) {
     const pageTexts = pageMarkers.map((start, index) => {
@@ -68,12 +69,12 @@ const splitApproximatePages = (raw: string, text: string, pageCount: number): st
       return extractTextFragments(raw.slice(start, end));
     });
     const hasEveryPage = pageTexts.length === pageCount && pageTexts.every(page => page.trim().length > 0);
-    if (hasEveryPage && hasSubstantialTextCoverage(text, pageTexts)) return pageTexts;
+    if (hasEveryPage && hasSubstantialTextCoverage(text, pageTexts)) return { pageTexts, pageMappingApproximate: false };
   }
 
   // PDF object order is not guaranteed. If page-object slices do not substantially cover
   // the full extracted text, keep all text by evenly splitting the full extraction instead.
-  return splitEvenlyOverFullText(text, pageCount);
+  return { pageTexts: splitEvenlyOverFullText(text, pageCount), pageMappingApproximate: true };
 };
 
 // pdfjs-dist installation was attempted for this patch but blocked by registry/security policy.
@@ -86,12 +87,13 @@ export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResul
     const text = extractTextFragments(raw);
 
     if (text.length < 20) {
-      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: 'This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.' };
+      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: 'This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.', pageMappingApproximate: true };
     }
 
-    const pageTexts = splitApproximatePages(raw, text, pageCount);
-    return { text, pageCount, pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING };
+    const pageMapping = splitApproximatePages(raw, text, pageCount);
+    return { text, pageCount, pageTexts: pageMapping.pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, pageMappingApproximate: pageMapping.pageMappingApproximate };
+
   } catch (err: any) {
-    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: err?.message || 'PDF parsing failed locally. This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.' };
+    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: err?.message || 'PDF parsing failed locally. This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.', pageMappingApproximate: true };
   }
 }

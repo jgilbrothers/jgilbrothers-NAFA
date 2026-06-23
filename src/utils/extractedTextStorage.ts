@@ -8,6 +8,7 @@ export interface StoredExtractedText {
   pageTexts: string[];
   pageCount: number;
   updatedAt: string;
+  pageMappingApproximate?: boolean;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
