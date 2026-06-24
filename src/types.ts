@@ -72,6 +72,8 @@ export interface DocumentRecord {
   extracted_text_preview?: string;
   extracted_text_id?: string;
   page_count?: number;
+  text_parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr';
+  page_mapping_approximate?: boolean;
   text_extraction_status?: 'not_started' | 'extracting' | 'succeeded' | 'failed' | 'needs_review';
   text_extraction_error?: string;
   transactions_extracted?: boolean;

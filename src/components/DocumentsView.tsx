@@ -635,6 +635,24 @@ export default function DocumentsView({
     return labels;
   };
 
+  const getParserLabel = (doc: DocumentRecord) => {
+    if (doc.text_parser === 'pdfjs') return 'PDF.js';
+    if (doc.text_parser === 'lightweight-fallback') return 'Lightweight fallback';
+    if (doc.text_parser === 'ocr' || (doc.text_source === 'ocr' && doc.ocr_text_available)) return 'OCR';
+    return 'Not run';
+  };
+
+  const getPageMappingLabel = (doc: DocumentRecord) => doc.page_mapping_approximate === false ? 'Exact' : doc.extracted_text_available ? 'Approximate' : 'Not available';
+
+  const getTextStatusMessage = (doc: DocumentRecord) => {
+    if (doc.text_extraction_status === 'extracting') return 'Reading PDF locally…';
+    if (doc.text_parser === 'pdfjs' && doc.text_extraction_status === 'succeeded') return 'Text read successfully with PDF.js.';
+    if (doc.text_parser === 'lightweight-fallback' && doc.extracted_text_available) return 'Text read with fallback parser. Page references may be approximate.';
+    if (doc.text_parser === 'ocr' && doc.extracted_text_available) return 'Text read with local OCR. Page references are approximate.';
+    if (doc.text_extraction_status === 'failed' || doc.text_extraction_status === 'needs_review') return 'OCR may be needed for this document.';
+    return 'Text has not been read yet.';
+  };
+
   const getTransactionStatusExplanation = (doc: DocumentRecord, rowCount: number) => {
     if ((doc.needs_review_transaction_count || 0) > 0) return 'Candidates found — review before importing.';
     if ((doc.transaction_candidate_count || 0) > 0) return 'Candidates found — review before importing.';
@@ -893,19 +911,21 @@ export default function DocumentsView({
       const result = await extractPdfText(stored.blob);
       const now = new Date().toISOString();
       if (result.text) {
-        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true });
+        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true, parser: result.parser, warnings: result.warnings });
         setExtractedText(result.text);
       }
       const updates: Partial<DocumentRecord> = {
-        text_read: result.status === 'succeeded',
+        text_read: Boolean(result.text),
         text_read_at: now,
         extracted_text_available: Boolean(result.text),
         extracted_text_id: result.text ? doc.id : undefined,
         extracted_text_preview: result.text.slice(0, 500),
         page_count: result.pageCount,
         text_extraction_status: result.status,
-        text_extraction_error: result.error,
-        ocr_status: result.status === 'succeeded' ? 'not_started' : 'needs_review',
+        text_extraction_error: result.error || result.warning,
+        text_parser: result.parser,
+        page_mapping_approximate: result.pageMappingApproximate ?? true,
+        ocr_status: result.status === 'succeeded' ? (doc.ocr_status === 'failed' ? 'not_started' : doc.ocr_status) : 'needs_review',
         ocr_confidence: result.confidence,
         text_source: result.text ? 'pdf' : undefined,
         processing_status: result.status === 'succeeded' ? 'Requires Verification' : 'Requires Verification',
@@ -913,11 +933,12 @@ export default function DocumentsView({
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       if (result.error) setErrorNotification(result.error);
-      else setSuccessNotification(`Text read successfully. Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
+      else setSuccessNotification(`${result.parser === 'pdfjs' ? 'Text read successfully with PDF.js.' : 'Text read with fallback parser. Page references may be approximate.'} Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
       if (!result.text.trim() || result.status !== 'succeeded') setErrorNotification('OCR may be needed for this document.');
     } catch (err: any) {
       const message = `${err?.message || 'Text extraction failed'} This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed for this document.`;
-      const updates: Partial<DocumentRecord> = { text_read: false, extracted_text_available: false, text_extraction_status: 'failed', text_extraction_error: message, ocr_status: 'needs_review', ocr_confidence: 0, processing_status: 'Requires Verification' };
+      const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
+      const updates: Partial<DocumentRecord> = { ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false }), text_extraction_status: 'failed', text_extraction_error: message, text_parser: doc.text_parser || 'lightweight-fallback', page_mapping_approximate: doc.page_mapping_approximate ?? true, ocr_status: 'needs_review', ocr_confidence: doc.ocr_confidence || 0, processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       setErrorNotification(message);
@@ -954,7 +975,7 @@ export default function DocumentsView({
       const now = new Date().toISOString();
       if (!(result.text || '').trim()) throw new Error('Local OCR completed but did not find readable text. The image may be too blurry, cropped, or low contrast.');
       const receiptFields = doc.file_type === 'Receipt' ? extractReceiptFieldsFromText(result.text) : undefined;
-      await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now, pageMappingApproximate: true });
+      await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: [result.text], pageCount: 1, updatedAt: now, pageMappingApproximate: true, parser: 'ocr' });
       if (selectedDocForPreviewRef.current?.id === doc.id) setExtractedText(result.text);
       const lowConfidence = result.status === 'needs_review' || (typeof result.confidence === 'number' && result.confidence < 0.75);
       const updates: Partial<DocumentRecord> = {
@@ -972,6 +993,8 @@ export default function DocumentsView({
         ocr_error: undefined,
         ocr_engine: result.engine,
         text_source: 'ocr',
+        text_parser: 'ocr',
+        page_mapping_approximate: true,
         processing_status: 'Requires Verification',
         extracted_merchant: receiptFields?.merchant || doc.extracted_merchant,
         extracted_date: receiptFields?.date || doc.extracted_date,
@@ -1014,7 +1037,7 @@ export default function DocumentsView({
     const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
-      sourcePagesApproximate: doc.text_source === 'ocr' || stored?.pageMappingApproximate === true,
+      sourcePagesApproximate: doc.text_source === 'ocr' || doc.text_parser === 'lightweight-fallback' || stored?.pageMappingApproximate === true,
       statementPeriod: doc.statement_period,
     });
     setReviewRowsOpen(true);
@@ -2048,7 +2071,11 @@ Files are stored in this browser’s local storage for this device and website. 
                     <br />
                     Detection Confidence: <strong className="text-emerald-400">{Math.round((typeof selectedDocForPreview.ocr_confidence === 'number' ? selectedDocForPreview.ocr_confidence : 0) * 100)}%</strong>.
                     <br />
-                    Text source: <strong className="text-emerald-500">{selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'OCR' : selectedDocForPreview.text_source === 'pdf' ? 'PDF text' : selectedDocForPreview.text_read ? 'Read' : 'Not read yet'}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
+                    Parser: <strong className="text-emerald-500">{getParserLabel(selectedDocForPreview)}</strong>. Page mapping: <strong className="text-emerald-500">{getPageMappingLabel(selectedDocForPreview)}</strong>.
+                    <br />
+                    Text status: <strong className="text-emerald-500">{getTextStatusMessage(selectedDocForPreview)}</strong>. Pages read: <strong className="text-emerald-500">{selectedDocForPreview.page_count || 'N/A'}</strong>. Status: <strong className="text-emerald-500">{selectedDocForPreview.text_extraction_status || 'not_started'}</strong>.
+                    <br />
+                    Transactions status: <strong className="text-emerald-500">{getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</strong>.
                     <br />
                     Extracted text length: <strong className="text-emerald-500">{extractedText.length.toLocaleString()}</strong>.
                     {selectedDocForPreview.text_extraction_error && <><br /><span className="text-amber-300">{selectedDocForPreview.text_extraction_error}</span></>}
