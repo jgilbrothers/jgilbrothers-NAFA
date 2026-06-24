@@ -426,6 +426,7 @@ export default function App() {
     deleteUploadedFile(id).catch(console.error);
     deleteExtractedText(id).catch(console.error);
     setDocuments(prev => prev.filter(d => d.id !== id));
+    setReconItems(prev => prev.map(item => item.documentId === id ? { ...item, documentId: undefined, status: item.transactionA || item.transactionB ? item.status : 'Resolved' } : item));
     appendAuditLog('DELETE_STATEMENT', `Removed statement log reference ID: "${id}"`, 'warning');
   };
 

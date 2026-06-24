@@ -108,6 +108,7 @@ export function normalizeImportedWorkspaceState(state: WorkspaceState): Workspac
       transaction_candidate_count: 0,
       needs_review_transaction_count: 0,
     })),
+    reconItems: (state.reconItems || []).map(item => item.id?.startsWith('REC-DOC-') ? { ...item, status: 'Resolved' as const } : item),
   };
 }
 

@@ -628,16 +628,17 @@ export default function DocumentsView({
     else if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'failed' || doc.ocr_status === 'Failed') labels.push('Text: OCR Needed');
     else labels.push(doc.text_read || doc.extracted_text_available ? 'Text: PDF Text' : 'Text: Not Read');
     labels[0] = doc.source_file_status === 'stored' ? 'File: Stored' : doc.source_file_status === 'metadata_only' ? 'File: Metadata Only' : 'File: Not Stored';
-    if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) labels.push('Transactions: Imported');
+    if ((doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions: Needs Review');
     else if ((doc.transaction_candidate_count || 0) > 0) labels.push('Transactions: Candidates Found');
-    else if ((doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions: Needs Review');
+    else if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) labels.push('Transactions: Imported');
     else labels.push('Transactions: Not Extracted');
     return labels;
   };
 
   const getTransactionStatusExplanation = (doc: DocumentRecord, rowCount: number) => {
+    if ((doc.needs_review_transaction_count || 0) > 0) return 'Candidates found — review before importing.';
+    if ((doc.transaction_candidate_count || 0) > 0) return 'Candidates found — review before importing.';
     if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) return 'Imported — confirmed transactions are in the ledger.';
-    if ((doc.transaction_candidate_count || 0) > 0 || (doc.needs_review_transaction_count || 0) > 0) return 'Candidates found — review before importing.';
     if (doc.text_source === 'ocr' && doc.ocr_text_available && doc.extracted_text_available) return 'Ready to extract — OCR text is available; review candidates before import.';
     if (doc.extracted_text_available || doc.text_read) return 'Ready to extract — document text is available.';
     if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') return doc.text_extraction_error?.toLowerCase().includes('image') || doc.text_extraction_error?.toLowerCase().includes('compressed') ? 'OCR needed — this PDF appears image-based or compressed.' : 'Not extracted — local reader could not find readable text.';
@@ -1861,7 +1862,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : 'Not read yet'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{(selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : 'Not extracted yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : (selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : 'Not extracted yet'}</div>
                 </div>
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
                 {ocrProgress && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2"><strong>OCR:</strong> {ocrProgress}</p>}
