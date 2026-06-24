@@ -1322,7 +1322,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
                           <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase ${
                             doc.ocr_status === 'Success' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-55 text-amber-700'
                           }`}>
-                            {doc.ocr_status} ({Math.round(doc.ocr_confidence*100)}%)
+                            {doc.ocr_status} ({Math.round((typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0)*100)}%)
                           </span>
                         </td>
                         <td className="p-2.5 font-bold">

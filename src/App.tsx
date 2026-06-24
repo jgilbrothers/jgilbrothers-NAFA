@@ -426,6 +426,7 @@ export default function App() {
     deleteUploadedFile(id).catch(console.error);
     deleteExtractedText(id).catch(console.error);
     setDocuments(prev => prev.filter(d => d.id !== id));
+    setReconItems(prev => prev.map(item => item.documentId === id ? { ...item, documentId: undefined, status: item.transactionA || item.transactionB ? item.status : 'Resolved' } : item));
     appendAuditLog('DELETE_STATEMENT', `Removed statement log reference ID: "${id}"`, 'warning');
   };
 
@@ -436,10 +437,38 @@ export default function App() {
   };
 
   const handleUpdateDocument = (docId: string, updates: Partial<DocumentRecord>) => {
+    const existingDoc = documents.find(d => d.id === docId);
+    const nextNeedsReviewCount = updates.needs_review_transaction_count ?? existingDoc?.needs_review_transaction_count ?? 0;
+    const nextCandidateCount = updates.transaction_candidate_count ?? existingDoc?.transaction_candidate_count ?? 0;
+    const nextConfirmedCount = updates.confirmed_transaction_count ?? existingDoc?.confirmed_transaction_count ?? 0;
+    const hasActiveCandidateReview = nextNeedsReviewCount > 0 || (nextCandidateCount > 0 && nextConfirmedCount < nextCandidateCount);
     setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
     if (updates.text_extraction_status === 'failed' || updates.text_extraction_status === 'needs_review' || (updates.needs_review_transaction_count || 0) > 0 || (updates.transaction_candidate_count === 0 && updates.transactions_extracted === false)) {
-      const reason = updates.text_extraction_error || (updates.needs_review_transaction_count ? `${updates.needs_review_transaction_count} transaction candidates need review` : 'No transactions detected');
-      setReconItems(prev => prev.some(item => item.id === `REC-DOC-${docId}`) ? prev : [...prev, { id: `REC-DOC-${docId}`, type: 'Low_Confidence', title: updates.text_extraction_status === 'failed' ? 'Text extraction failed' : 'Document extraction needs review', description: reason, severity: 'medium', documentId: docId, status: 'Unresolved' }]);
+      const isOcrFailure = updates.ocr_status === 'failed';
+      const reviewReasonType = isOcrFailure ? 'ocr_failure' : updates.text_extraction_status === 'failed' ? 'text_extraction_failure' : 'transaction_candidates';
+      const reason = isOcrFailure ? `Local OCR could not read this document. Review the source file or try a clearer image.${updates.ocr_error || updates.text_extraction_error ? ` Details: ${updates.ocr_error || updates.text_extraction_error}` : ''}` : updates.text_extraction_error || (updates.needs_review_transaction_count ? `${updates.needs_review_transaction_count} transaction candidates need review` : 'No transactions detected');
+      setReconItems(prev => prev.some(item => item.id === `REC-DOC-${docId}`) ? prev : [...prev, { id: `REC-DOC-${docId}`, type: 'Low_Confidence', title: isOcrFailure ? 'OCR failed' : updates.text_extraction_status === 'failed' ? 'Text extraction failed' : 'Document extraction needs review', description: reason, severity: 'medium', documentId: docId, status: 'Unresolved', reviewReasonType }]);
+    } else if (
+      updates.ocr_status === 'succeeded' ||
+      (updates.text_extraction_status === 'succeeded' && updates.text_source === 'ocr') ||
+      (updates.needs_review_transaction_count === 0 && updates.transaction_candidate_count === 0 && updates.confirmed_transaction_count !== undefined)
+    ) {
+      const resolvingCandidateReview = updates.needs_review_transaction_count === 0 && updates.transaction_candidate_count === 0 && updates.confirmed_transaction_count !== undefined;
+      setReconItems(prev => prev.map(item => {
+        if (item.id !== `REC-DOC-${docId}`) return item;
+        const isExtractionFailureReview = item.reviewReasonType === 'ocr_failure' || item.reviewReasonType === 'text_extraction_failure' || /ocr failed|text extraction failed/i.test(item.title) || /local ocr could not read|text extraction failed/i.test(item.description);
+        if (resolvingCandidateReview || (isExtractionFailureReview && !hasActiveCandidateReview)) return { ...item, status: 'Resolved' };
+        if (isExtractionFailureReview && hasActiveCandidateReview) {
+          return {
+            ...item,
+            title: 'Document import needs review',
+            description: `${nextNeedsReviewCount || nextCandidateCount} transaction candidate(s) from ${existingDoc?.filename || docId} need review before relying on totals.`,
+            reviewReasonType: 'transaction_candidates' as const,
+            status: 'Unresolved' as const,
+          };
+        }
+        return item;
+      }));
     }
     appendAuditLog('UPDATE_DOCUMENT', `Updated document metadata for ${docId}: ${JSON.stringify(updates)}`, 'info');
   };
@@ -620,6 +649,7 @@ export default function App() {
           severity: 'medium' as const,
           documentId: newDoc.id,
           status: 'Unresolved' as const,
+          reviewReasonType: 'transaction_candidates' as const,
         };
         if (!merged.some(m => m.id === reviewItem.id)) {
           merged.push(reviewItem);

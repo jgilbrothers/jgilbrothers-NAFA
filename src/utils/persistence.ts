@@ -99,9 +99,16 @@ export function normalizeImportedWorkspaceState(state: WorkspaceState): Workspac
       extracted_text_preview: undefined,
       text_extraction_status: 'not_started',
       text_extraction_error: undefined,
+      text_source: undefined,
+      ocr_text_available: false,
+      ocr_status: 'not_started',
+      ocr_read_at: undefined,
+      ocr_error: undefined,
+      ocr_confidence: 0,
       transaction_candidate_count: 0,
       needs_review_transaction_count: 0,
     })),
+    reconItems: (state.reconItems || []).map(item => item.id?.startsWith('REC-DOC-') ? { ...item, status: 'Resolved' as const } : item),
   };
 }
 
