@@ -65,6 +65,7 @@ export interface ReconciliationItem {
   transactionB?: Transaction;
   documentId?: string;
   status: 'Unresolved' | 'Approved' | 'Flagged' | 'Resolved';
+  reviewReasonType?: 'ocr_failure' | 'text_extraction_failure' | 'transaction_candidates';
 }
 
 export function detectReconciliationQueues(
