@@ -6,12 +6,14 @@ export interface PdfTextExtractionResult {
   error?: string;
   confidence: number;
   readStatus: 'readable_text' | 'no_selectable_text' | 'partial_text' | 'failed';
-  parser: 'pdfjs-dist' | 'lightweight-fallback';
+  parser: 'pdfjs' | 'lightweight-fallback';
+  warnings?: string[];
   warning?: string;
   pageMappingApproximate?: boolean;
 }
 
-const PDFJS_INSTALL_BLOCKED_WARNING = 'pdfjs-dist could not be installed in this environment: npm install pdfjs-dist returned 403 Forbidden from https://registry.npmjs.org/pdfjs-dist. NAFA Ledger is using the existing lightweight local reader as a visible fallback; scanned, image-based, encrypted, or compressed PDFs may require OCR later.';
+const PDFJS_INSTALL_BLOCKED_WARNING = 'pdfjs-dist is not installed because npm install pdfjs-dist returned 403 Forbidden from https://registry.npmjs.org/pdfjs-dist in this environment. NAFA Ledger is using the lightweight local fallback reader; page references may be approximate and scanned, image-based, encrypted, or compressed PDFs may require OCR.';
+const LOCAL_EXTRACTION_FAILURE = 'Text could not be extracted locally. This may be scanned, image-based, encrypted, or compressed. OCR may be needed.';
 
 const decodePdfEscapes = (value: string): string => value
   .replace(/\\n/g, '\n')
@@ -87,13 +89,13 @@ export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResul
     const text = extractTextFragments(raw);
 
     if (text.length < 20) {
-      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: 'This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.', pageMappingApproximate: true };
+      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING, 'Fallback parser found too little selectable text. OCR may be needed.'], error: LOCAL_EXTRACTION_FAILURE, pageMappingApproximate: true };
     }
 
     const pageMapping = splitApproximatePages(raw, text, pageCount);
-    return { text, pageCount, pageTexts: pageMapping.pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, pageMappingApproximate: pageMapping.pageMappingApproximate };
+    return { text, pageCount, pageTexts: pageMapping.pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING, ...(pageMapping.pageMappingApproximate ? ['Text read with fallback parser. Page references may be approximate.'] : [])], pageMappingApproximate: pageMapping.pageMappingApproximate };
 
   } catch (err: any) {
-    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, error: err?.message || 'PDF parsing failed locally. This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed later.', pageMappingApproximate: true };
+    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING], error: err?.message ? `${LOCAL_EXTRACTION_FAILURE} ${err.message}` : LOCAL_EXTRACTION_FAILURE, pageMappingApproximate: true };
   }
 }

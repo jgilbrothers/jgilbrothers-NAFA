@@ -9,6 +9,8 @@ export interface StoredExtractedText {
   pageCount: number;
   updatedAt: string;
   pageMappingApproximate?: boolean;
+  parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr';
+  warnings?: string[];
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;

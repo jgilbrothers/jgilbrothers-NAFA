@@ -442,14 +442,15 @@ export default function App() {
     const nextCandidateCount = updates.transaction_candidate_count ?? existingDoc?.transaction_candidate_count ?? 0;
     const nextConfirmedCount = updates.confirmed_transaction_count ?? existingDoc?.confirmed_transaction_count ?? 0;
     const hasActiveCandidateReview = nextNeedsReviewCount > 0 || (nextCandidateCount > 0 && nextConfirmedCount < nextCandidateCount);
+    const normalizedUpdatedOcrStatus = updates.ocr_status?.toLowerCase();
     setDocuments(prev => prev.map(d => d.id === docId ? { ...d, ...updates } : d));
     if (updates.text_extraction_status === 'failed' || updates.text_extraction_status === 'needs_review' || (updates.needs_review_transaction_count || 0) > 0 || (updates.transaction_candidate_count === 0 && updates.transactions_extracted === false)) {
-      const isOcrFailure = updates.ocr_status === 'failed';
+      const isOcrFailure = normalizedUpdatedOcrStatus === 'failed';
       const reviewReasonType = isOcrFailure ? 'ocr_failure' : updates.text_extraction_status === 'failed' ? 'text_extraction_failure' : 'transaction_candidates';
       const reason = isOcrFailure ? `Local OCR could not read this document. Review the source file or try a clearer image.${updates.ocr_error || updates.text_extraction_error ? ` Details: ${updates.ocr_error || updates.text_extraction_error}` : ''}` : updates.text_extraction_error || (updates.needs_review_transaction_count ? `${updates.needs_review_transaction_count} transaction candidates need review` : 'No transactions detected');
       setReconItems(prev => prev.some(item => item.id === `REC-DOC-${docId}`) ? prev : [...prev, { id: `REC-DOC-${docId}`, type: 'Low_Confidence', title: isOcrFailure ? 'OCR failed' : updates.text_extraction_status === 'failed' ? 'Text extraction failed' : 'Document extraction needs review', description: reason, severity: 'medium', documentId: docId, status: 'Unresolved', reviewReasonType }]);
     } else if (
-      updates.ocr_status === 'succeeded' ||
+      normalizedUpdatedOcrStatus === 'succeeded' ||
       (updates.text_extraction_status === 'succeeded' && updates.text_source === 'ocr') ||
       (updates.needs_review_transaction_count === 0 && updates.transaction_candidate_count === 0 && updates.confirmed_transaction_count !== undefined)
     ) {
