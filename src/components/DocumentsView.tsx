@@ -616,6 +616,8 @@ export default function DocumentsView({
     return hasLocallyStoredFile(doc) && (mime.startsWith('text/') || mime.includes('csv') || lower.endsWith('.csv') || lower.endsWith('.txt'));
   };
 
+  const getNormalizedOcrStatus = (doc: DocumentRecord) => (doc.ocr_status || '').toLowerCase();
+
   const canRunLocalOcr = (doc: DocumentRecord) => {
     const mime = doc.mime_type || '';
     return hasLocallyStoredFile(doc) && isImageOcrSupported(mime, doc.filename);
@@ -623,9 +625,10 @@ export default function DocumentsView({
 
   const getProgressLabels = (doc: DocumentRecord, rowCount: number) => {
     const labels = [doc.source_file_status === 'stored' ? 'File Stored' : 'File Not Stored'];
-    if (doc.ocr_status === 'running') labels.push('Text: OCR Running');
+    const ocrStatus = getNormalizedOcrStatus(doc);
+    if (ocrStatus === 'running') labels.push('Text: OCR Running');
     else if (doc.text_source === 'ocr' && doc.ocr_text_available && doc.extracted_text_available) labels.push('Text: OCR');
-    else if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'failed' || doc.ocr_status === 'Failed') labels.push('Text: OCR Needed');
+    else if (doc.text_extraction_status === 'failed' || ocrStatus === 'failed') labels.push('Text: OCR Needed');
     else labels.push(doc.text_read || doc.extracted_text_available ? 'Text: PDF Text' : 'Text: Not Read');
     labels[0] = doc.source_file_status === 'stored' ? 'File: Stored' : doc.source_file_status === 'metadata_only' ? 'File: Metadata Only' : 'File: Not Stored';
     if ((doc.needs_review_transaction_count || 0) > 0) labels.push('Transactions: Needs Review');
@@ -646,9 +649,10 @@ export default function DocumentsView({
 
   const getTextStatusMessage = (doc: DocumentRecord) => {
     if (doc.text_extraction_status === 'extracting') return 'Reading PDF locally…';
-    if (doc.text_parser === 'pdfjs' && doc.text_extraction_status === 'succeeded') return 'Text read successfully with PDF.js.';
+    if (doc.text_parser === 'pdfjs' && doc.extracted_text_available) return 'Text read successfully with PDF.js.';
     if (doc.text_parser === 'lightweight-fallback' && doc.extracted_text_available) return 'Text read with fallback parser. Page references may be approximate.';
     if (doc.text_parser === 'ocr' && doc.extracted_text_available) return 'Text read with local OCR. Page references are approximate.';
+    if (doc.extracted_text_available) return 'Text read successfully.';
     if (doc.text_extraction_status === 'failed' || doc.text_extraction_status === 'needs_review') return 'OCR may be needed for this document.';
     return 'Text has not been read yet.';
   };
@@ -659,7 +663,7 @@ export default function DocumentsView({
     if (rowCount > 0 || (doc.confirmed_transaction_count || 0) > 0) return 'Imported — confirmed transactions are in the ledger.';
     if (doc.text_source === 'ocr' && doc.ocr_text_available && doc.extracted_text_available) return 'Ready to extract — OCR text is available; review candidates before import.';
     if (doc.extracted_text_available || doc.text_read) return 'Ready to extract — document text is available.';
-    if (doc.text_extraction_status === 'failed' || doc.ocr_status === 'Failed') return doc.text_extraction_error?.toLowerCase().includes('image') || doc.text_extraction_error?.toLowerCase().includes('compressed') ? 'OCR needed — this PDF appears image-based or compressed.' : 'Not extracted — local reader could not find readable text.';
+    if (doc.text_extraction_status === 'failed' || getNormalizedOcrStatus(doc) === 'failed') return doc.text_extraction_error?.toLowerCase().includes('image') || doc.text_extraction_error?.toLowerCase().includes('compressed') ? 'OCR needed — this PDF appears image-based or compressed.' : 'Not extracted — local reader could not find readable text.';
     return 'Not extracted yet — document text has not been read.';
   };
 
@@ -914,31 +918,47 @@ export default function DocumentsView({
         await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true, parser: result.parser, warnings: result.warnings });
         setExtractedText(result.text);
       }
-      const updates: Partial<DocumentRecord> = {
-        text_read: Boolean(result.text),
+      const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
+      const hasNewText = Boolean(result.text.trim());
+      const ocrStatus = getNormalizedOcrStatus(doc);
+      const updates: Partial<DocumentRecord> = hasNewText ? {
+        text_read: true,
         text_read_at: now,
-        extracted_text_available: Boolean(result.text),
-        extracted_text_id: result.text ? doc.id : undefined,
+        extracted_text_available: true,
+        extracted_text_id: doc.id,
         extracted_text_preview: result.text.slice(0, 500),
-        page_count: result.pageCount,
+        page_count: result.pageCount || doc.page_count,
         text_extraction_status: result.status,
         text_extraction_error: result.error || result.warning,
         text_parser: result.parser,
         page_mapping_approximate: result.pageMappingApproximate ?? true,
-        ocr_status: result.status === 'succeeded' ? (doc.ocr_status === 'failed' ? 'not_started' : doc.ocr_status) : 'needs_review',
+        ocr_status: result.status === 'succeeded' ? (ocrStatus === 'failed' ? 'not_started' : doc.ocr_status) : 'needs_review',
         ocr_confidence: result.confidence,
-        text_source: result.text ? 'pdf' : undefined,
-        processing_status: result.status === 'succeeded' ? 'Requires Verification' : 'Requires Verification',
+        text_source: 'pdf',
+        processing_status: 'Requires Verification',
+      } : {
+        ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false, extracted_text_id: undefined, extracted_text_preview: undefined, text_source: undefined, text_parser: result.parser, page_mapping_approximate: result.pageMappingApproximate ?? true }),
+        page_count: result.pageCount || doc.page_count,
+        text_read_at: now,
+        text_extraction_status: result.status,
+        text_extraction_error: result.error || result.warning,
+        ocr_status: hasPriorText ? doc.ocr_status : 'needs_review',
+        ocr_confidence: hasPriorText ? doc.ocr_confidence : result.confidence,
+        processing_status: 'Requires Verification',
       };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-      if (result.error) setErrorNotification(result.error);
-      else setSuccessNotification(`${result.parser === 'pdfjs' ? 'Text read successfully with PDF.js.' : 'Text read with fallback parser. Page references may be approximate.'} Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
-      if (!result.text.trim() || result.status !== 'succeeded') setErrorNotification('OCR may be needed for this document.');
+      if (result.error) {
+        setErrorNotification(result.error);
+      } else if (!hasNewText || result.status !== 'succeeded') {
+        setErrorNotification('OCR may be needed for this document.');
+      } else {
+        setSuccessNotification(`${result.parser === 'pdfjs' ? 'Text read successfully with PDF.js.' : 'Text read with fallback parser. Page references may be approximate.'} Read ${result.text.length.toLocaleString()} characters from ${result.pageCount} PDF page(s) locally.${result.warning ? ` Warning: ${result.warning}` : ''}`);
+      }
     } catch (err: any) {
       const message = `${err?.message || 'Text extraction failed'} This PDF may be scanned, image-based, encrypted, or compressed. OCR may be needed for this document.`;
       const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
-      const updates: Partial<DocumentRecord> = { ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false }), text_extraction_status: 'failed', text_extraction_error: message, text_parser: doc.text_parser || 'lightweight-fallback', page_mapping_approximate: doc.page_mapping_approximate ?? true, ocr_status: 'needs_review', ocr_confidence: doc.ocr_confidence || 0, processing_status: 'Requires Verification' };
+      const updates: Partial<DocumentRecord> = { ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false, extracted_text_id: undefined, extracted_text_preview: undefined, text_source: undefined }), text_extraction_status: 'failed', text_extraction_error: message, ...(hasPriorText ? { text_parser: doc.text_parser, page_mapping_approximate: doc.page_mapping_approximate, page_count: doc.page_count, ocr_status: doc.ocr_status, ocr_confidence: doc.ocr_confidence } : { text_parser: doc.text_parser || 'lightweight-fallback', page_mapping_approximate: doc.page_mapping_approximate ?? true, ocr_status: 'needs_review', ocr_confidence: doc.ocr_confidence || 0 }), processing_status: 'Requires Verification' };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
       setErrorNotification(message);
@@ -1679,7 +1699,7 @@ Files are stored in this browser’s local storage for this device and website. 
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredDocs.map((doc) => {
-                const isUnderReview = doc.ocr_status === 'Low Confidence' || (typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) < 0.85;
+                const isUnderReview = getNormalizedOcrStatus(doc) === 'low confidence' || (typeof doc.ocr_confidence === 'number' ? doc.ocr_confidence : 0) < 0.85;
 
                 // Dynamically fetch extracted rows count & count matches
                 const rowCount = transactions.filter(t => t.source_document_id === doc.id).length;
@@ -1884,7 +1904,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-900">
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">File</span>{previewFileAvailable ? 'Stored in this browser' : selectedDocForPreview.source_file_status === 'metadata_only' ? 'File details only' : 'Not available in this browser'}</div>
-                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{selectedDocForPreview.ocr_status === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : 'Not read yet'}</div>
+                  <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Text</span>{getNormalizedOcrStatus(selectedDocForPreview) === 'running' ? 'OCR running' : selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available && selectedDocForPreview.extracted_text_available ? 'Read by OCR' : getNormalizedOcrStatus(selectedDocForPreview) === 'failed' ? 'OCR failed' : selectedDocForPreview.text_extraction_status === 'extracting' ? 'Reading' : selectedDocForPreview.text_extraction_status === 'succeeded' ? 'Read from PDF text' : selectedDocForPreview.text_extraction_status === 'failed' ? 'OCR needed' : selectedDocForPreview.text_extraction_status === 'needs_review' ? 'OCR needed' : 'Not read yet'}</div>
                   <div className="bg-white/70 border border-emerald-100 rounded-lg p-2"><span className="block text-[9px] font-bold uppercase text-emerald-700">Transactions</span>{selectedDocForPreview.needs_review_transaction_count ? 'Needs review' : selectedDocForPreview.transaction_candidate_count ? 'Candidates found' : (selectedDocForPreview.confirmed_transaction_count || transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length) > 0 ? 'Confirmed/imported' : 'Not extracted yet'}</div>
                 </div>
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
@@ -1895,10 +1915,10 @@ Files are stored in this browser’s local storage for this device and website. 
                 {selectedDocForPreview.text_extraction_status === 'failed' && (
                   <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
                     <p><strong>File Preview:</strong> {previewFileAvailable ? 'Available' : 'Not Available'}</p>
-                    <p><strong>Text:</strong> {selectedDocForPreview.ocr_status === 'failed' ? 'OCR failed' : 'Failed'}</p>
+                    <p><strong>Text:</strong> {getNormalizedOcrStatus(selectedDocForPreview) === 'failed' ? 'OCR failed' : 'Failed'}</p>
                     <p><strong>Reason:</strong> {selectedDocForPreview.text_extraction_error || 'Local reader could not find readable text.'}</p>
                     <p><strong>Transactions:</strong> Not Extracted</p>
-                    <p><strong>Next Step:</strong> {selectedDocForPreview.ocr_status === 'failed' ? 'Review the source file, try a clearer image, or use another extraction method.' : 'OCR may be needed for this document.'}</p>
+                    <p><strong>Next Step:</strong> {getNormalizedOcrStatus(selectedDocForPreview) === 'failed' ? 'Review the source file, try a clearer image, or use another extraction method.' : 'OCR may be needed for this document.'}</p>
                   </div>
                 )}
                 {!previewFileAvailable && selectedDocForPreview.source_file_status !== 'metadata_only' && (
