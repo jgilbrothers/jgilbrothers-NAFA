@@ -45,7 +45,7 @@ export default function AccountsView({
       account_name: formData.account_name,
       account_suffix: formData.account_suffix,
       account_type: formData.account_type,
-      institution_name: formData.institution_name || 'Generic Bank',
+      institution_name: formData.institution_name || '',
       current_balance: parseFloat(formData.current_balance) || 0,
       available_balance: parseFloat(formData.current_balance) || 0,
       statement_period: 'Current Account Period',
@@ -121,7 +121,7 @@ export default function AccountsView({
               type="text"
               required
               maxLength={4}
-              placeholder="e.g. 4321"
+              placeholder="account ending"
               value={formData.account_suffix}
               onChange={e => setFormData({...formData, account_suffix: e.target.value})}
               className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 font-mono outline-hidden"
@@ -147,7 +147,7 @@ export default function AccountsView({
             <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Brokerage / Institution name</label>
             <input 
               type="text"
-              placeholder="e.g. Metro National Bank"
+              placeholder="Institution name"
               value={formData.institution_name}
               onChange={e => setFormData({...formData, institution_name: e.target.value})}
               className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-950 outline-hidden"

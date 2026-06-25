@@ -827,69 +827,52 @@ export default function App() {
               <h1 className="text-md font-bold tracking-tight text-white font-sans">{appName}</h1>
               <span className="bg-slate-800 text-emerald-400 font-mono text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">V{appVersion}</span>
             </div>
-            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Offline financial analysis and document intelligence workspace</p>
+            <p className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">Document-first financial ledger</p>
           </div>
         </div>
 
         {/* Identity block */}
         <div className="flex items-center gap-3.5 text-xs">
-          <div className="hidden lg:flex flex-col items-end text-right select-none">
-            <span className="font-bold text-slate-250">Local Workspace</span>
-            <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">OFFLINE-FIRST ANALYSIS</span>
-          </div>
-          <div className="bg-slate-950 py-1.5 px-3 border border-slate-800 rounded-lg flex items-center gap-2 font-mono text-[10px] text-slate-400">
+          <div className="bg-slate-950 py-1.5 px-3 border border-slate-800 rounded-lg flex items-center gap-2 font-mono text-[10px] text-slate-300">
             <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
-            <span className="font-bold">STANDALONE INTEGRITY CHECKED</span>
+            <span className="font-bold">Saved in this browser</span>
           </div>
         </div>
       </header>
 
-      {/* Real-time Workspace Desktop Status Bar */}
-      <div className="bg-slate-800 text-slate-300 px-6 py-2 border-b border-slate-700 flex flex-wrap items-center justify-between text-[11px] font-mono gap-3 select-none">
-        <div className="flex items-center gap-4 flex-wrap">
+      {/* Project identity and controls */}
+      <div className="bg-slate-800 text-slate-300 px-6 py-2.5 border-b border-slate-700 flex flex-wrap items-center justify-between text-[11px] font-mono gap-3 select-none">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="flex items-center gap-1.5 text-zinc-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Database: <strong className="text-white font-bold">Local Browser Workspace</strong>
-          </span>
-          <span className="text-slate-500">|</span>
-          <span className="text-zinc-300">
-            Active Project: <span className="text-emerald-400 font-bold">{activeSummary.name}</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+            Project: <strong className="text-emerald-400 font-bold">{activeSummary.name}</strong>
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-zinc-300">Owner: <span className="text-white font-bold">{activeSummary.ownerName || 'Not set'}</span></span>
           <span className="text-slate-500">|</span>
           <span className="text-zinc-300">County: <span className="text-white font-bold">{activeSummary.county || jurisdiction}</span></span>
           <span className="text-slate-500">|</span>
-          <span className="text-zinc-300">
-            Jurisdiction: <span className="text-emerald-400 font-bold">{jurisdiction}</span>
-          </span>
+          <span className="text-zinc-300">Jurisdiction: <span className="text-emerald-400 font-bold">{jurisdiction}</span></span>
           <span className="text-slate-500">|</span>
-          <span className="text-zinc-300">Docs: <span className="text-white font-bold">{documents.length}</span> · Transactions: <span className="text-white font-bold">{transactions.length}</span></span>
+          <span className="text-zinc-300">Docs: <span className="text-white font-bold">{documents.length}</span></span>
           <span className="text-slate-500">|</span>
-          <span className="text-zinc-300 flex items-center gap-1">
-            <span>Sync:</span> <strong className="text-emerald-400 font-bold font-mono">100% OFFLINE-READY</strong>
-          </span>
+          <span className="text-zinc-300">Transactions: <span className="text-white font-bold">{transactions.length}</span></span>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <button onClick={() => {
             setStartupMode('new');
             setHasOpenedProject(false);
-          }} className="text-[9px] bg-emerald-500 text-slate-950 font-bold px-2 py-1 rounded uppercase">New Project</button>
+          }} className="text-[12px] bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3.5 py-2 rounded-lg">New Project</button>
           <button onClick={() => {
             setStartupMode('open');
             setHasOpenedProject(false);
-          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Switch Project</button>
+          }} className="text-[12px] bg-slate-900 hover:bg-slate-950 border border-slate-600 text-slate-100 font-bold px-3.5 py-2 rounded-lg">Switch Project</button>
           <button onClick={() => {
             setStartupMode('open');
             setHasOpenedProject(false);
-          }} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase">Open Existing Project</button>
-          <button onClick={handleExportBackup} className="text-[9px] bg-slate-900 border border-slate-700 text-slate-200 font-bold px-2 py-1 rounded uppercase flex items-center gap-1"><Download className="h-3 w-3" /> Export Project</button>
-          {/* Desktop shortcut tip */}
-          <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded flex items-center gap-1.5">
-            <kbd className="font-sans font-bold bg-slate-800 px-1 rounded text-[9px] text-slate-300">Ctrl+K</kbd> Search Actions
-            <kbd className="font-sans font-bold bg-slate-800 px-1 rounded text-[9px] text-slate-300 ml-1.5">Ctrl+S</kbd> Save Backup
-          </span>
+          }} className="text-[12px] bg-slate-900 hover:bg-slate-950 border border-slate-600 text-slate-100 font-bold px-3.5 py-2 rounded-lg">Open Project Backup</button>
+          <button onClick={handleExportBackup} className="text-[12px] bg-slate-900 hover:bg-slate-950 border border-slate-600 text-slate-100 font-bold px-3.5 py-2 rounded-lg flex items-center gap-1.5"><Download className="h-4 w-4" /> Export Project Backup</button>
 
           {/* PWA Installation Button Widget */}
           {deferredPrompt ? (
@@ -908,7 +891,7 @@ export default function App() {
             </button>
           ) : (
             <span className="text-[9px] bg-slate-900/60 text-slate-450 border border-slate-750 p-0.5 px-2 rounded font-semibold uppercase">
-              ✓ Offline-ready static app
+              Local-only project
             </span>
           )}
         </div>
