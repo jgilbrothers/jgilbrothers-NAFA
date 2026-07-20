@@ -9,8 +9,11 @@ export interface StoredExtractedText {
   pageCount: number;
   updatedAt: string;
   pageMappingApproximate?: boolean;
-  parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr';
+  parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr' | 'mammoth' | 'xlsx';
   warnings?: string[];
+  pageConfidences?: Array<number | undefined>;
+  pageEngines?: string[];
+  structuredData?: unknown;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -70,6 +73,10 @@ export async function saveExtractedText(record: StoredExtractedText): Promise<vo
 
 export async function getExtractedText(documentId: string): Promise<StoredExtractedText | undefined> {
   return withStore('readonly', store => store.get(documentId));
+}
+
+export async function getAllExtractedTexts(): Promise<StoredExtractedText[]> {
+  return withStore('readonly', store => store.getAll());
 }
 
 export async function deleteExtractedText(documentId: string): Promise<void> {

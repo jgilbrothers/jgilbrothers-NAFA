@@ -1,3 +1,5 @@
+import { configurePdfWorker } from './pdfRuntime';
+
 export interface PdfTextExtractionResult {
   text: string;
   pageCount: number;
@@ -6,96 +8,46 @@ export interface PdfTextExtractionResult {
   error?: string;
   confidence: number;
   readStatus: 'readable_text' | 'no_selectable_text' | 'partial_text' | 'failed';
-  parser: 'pdfjs' | 'lightweight-fallback';
+  parser: 'pdfjs';
   warnings?: string[];
   warning?: string;
-  pageMappingApproximate?: boolean;
+  pageMappingApproximate: false;
 }
 
-const PDFJS_INSTALL_BLOCKED_WARNING = 'pdfjs-dist is not installed because npm install pdfjs-dist returned 403 Forbidden from https://registry.npmjs.org/pdfjs-dist in this environment. NAFA Ledger is using the lightweight local fallback reader; page references may be approximate and scanned, image-based, encrypted, or compressed PDFs may require OCR.';
-const LOCAL_EXTRACTION_FAILURE = 'Text could not be extracted locally. This may be scanned, image-based, encrypted, or compressed. OCR may be needed.';
+const NO_TEXT = 'PDF.js found no selectable text. The PDF may be scanned or image-based; run local OCR.';
 
-const decodePdfEscapes = (value: string): string => value
-  .replace(/\\n/g, '\n')
-  .replace(/\\r/g, '\n')
-  .replace(/\\t/g, ' ')
-  .replace(/\\\(/g, '(')
-  .replace(/\\\)/g, ')')
-  .replace(/\\\\/g, '\\')
-  .replace(/\\([0-7]{1,3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8)));
-
-const cleanText = (value: string): string => value
-  .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, ' ')
-  .replace(/[ \t]+\n/g, '\n')
-  .replace(/[ \t]{2,}/g, ' ')
-  .replace(/\n{3,}/g, '\n\n')
-  .trim();
-
-const extractTextFragments = (raw: string): string => {
-  const fragments: string[] = [];
-  const literalRegex = /\((?:\\.|[^\\()])*\)\s*(?:Tj|'|")/g;
-  let literalMatch: RegExpExecArray | null;
-  while ((literalMatch = literalRegex.exec(raw))) {
-    fragments.push(decodePdfEscapes(literalMatch[0].replace(/\)\s*(?:Tj|'|")$/, '').slice(1)));
-  }
-
-  const arrayRegex = /\[((?:\s*\((?:\\.|[^\\()])*\)\s*-?\d*\.?\d*)+)\]\s*TJ/g;
-  let arrayMatch: RegExpExecArray | null;
-  while ((arrayMatch = arrayRegex.exec(raw))) {
-    const parts = [...arrayMatch[1].matchAll(/\((?:\\.|[^\\()])*\)/g)].map(m => decodePdfEscapes(m[0].slice(1, -1)));
-    fragments.push(parts.join(''));
-  }
-  return cleanText(fragments.join('\n'));
-};
-
-const compactForCoverage = (value: string): string => value.replace(/\s+/g, '');
-
-const hasSubstantialTextCoverage = (fullText: string, pageTexts: string[]): boolean => {
-  const fullCompact = compactForCoverage(fullText);
-  const pagesCompact = compactForCoverage(pageTexts.join('\n'));
-  if (!fullCompact) return false;
-  return pagesCompact.length / fullCompact.length >= 0.85;
-};
-
-const splitEvenlyOverFullText = (text: string, pageCount: number): string[] => {
-  const safePageCount = Math.max(pageCount, 1);
-  const perPageSize = Math.max(1, Math.ceil(text.length / safePageCount));
-  return Array.from({ length: safePageCount }, (_, idx) => text.slice(idx * perPageSize, (idx + 1) * perPageSize)).filter(Boolean);
-};
-
-const splitApproximatePages = (raw: string, text: string, pageCount: number): { pageTexts: string[]; pageMappingApproximate: boolean } => {
-  const pageMarkers = [...raw.matchAll(/\/Type\s*\/Page\b/g)].map(m => m.index || 0);
-  if (pageMarkers.length > 1) {
-    const pageTexts = pageMarkers.map((start, index) => {
-      const end = pageMarkers[index + 1] || raw.length;
-      return extractTextFragments(raw.slice(start, end));
-    });
-    const hasEveryPage = pageTexts.length === pageCount && pageTexts.every(page => page.trim().length > 0);
-    if (hasEveryPage && hasSubstantialTextCoverage(text, pageTexts)) return { pageTexts, pageMappingApproximate: false };
-  }
-
-  // PDF object order is not guaranteed. If page-object slices do not substantially cover
-  // the full extracted text, keep all text by evenly splitting the full extraction instead.
-  return { pageTexts: splitEvenlyOverFullText(text, pageCount), pageMappingApproximate: true };
-};
-
-// pdfjs-dist installation was attempted for this patch but blocked by registry/security policy.
-// This fallback remains intentionally visible through `warning` so callers do not silently trust it as a full parser.
+/** Extracts selectable text page-by-page. Page array indexes always map to PDF page numbers. */
 export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResult> {
   try {
-    const buffer = await blob.arrayBuffer();
-    const raw = new TextDecoder('latin1').decode(buffer);
-    const pageCount = Math.max((raw.match(/\/Type\s*\/Page\b/g) || []).length, 1);
-    const text = extractTextFragments(raw);
-
-    if (text.length < 20) {
-      return { text, pageCount, pageTexts: text ? [text] : [], status: 'needs_review', confidence: 0.2, readStatus: 'no_selectable_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING, 'Fallback parser found too little selectable text. OCR may be needed.'], error: LOCAL_EXTRACTION_FAILURE, pageMappingApproximate: true };
+    const pdfjs = typeof DOMMatrix === 'undefined' ? await import('pdfjs-dist/legacy/build/pdf.mjs') : await import('pdfjs-dist');
+    configurePdfWorker(pdfjs);
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const standardFontDataUrl = typeof window !== 'undefined' ? new URL(`${(import.meta as any).env?.BASE_URL || '/'}pdf/standard_fonts/`, window.location.origin).href : undefined;
+    const loadingTask = pdfjs.getDocument({ data: bytes, useWorkerFetch: false, isEvalSupported: false, standardFontDataUrl, verbosity: 0 });
+    const pdf = await loadingTask.promise;
+    const pageTexts: string[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map(item => ('str' in item ? item.str : ''))
+        .join(' ')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+      pageTexts.push(text);
+      page.cleanup();
     }
-
-    const pageMapping = splitApproximatePages(raw, text, pageCount);
-    return { text, pageCount, pageTexts: pageMapping.pageTexts, status: 'succeeded', confidence: text.length > 500 ? 0.78 : 0.58, readStatus: text.length > 500 ? 'readable_text' : 'partial_text', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING, ...(pageMapping.pageMappingApproximate ? ['Text read with fallback parser. Page references may be approximate.'] : [])], pageMappingApproximate: pageMapping.pageMappingApproximate };
-
-  } catch (err: any) {
-    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'lightweight-fallback', warning: PDFJS_INSTALL_BLOCKED_WARNING, warnings: [PDFJS_INSTALL_BLOCKED_WARNING], error: err?.message ? `${LOCAL_EXTRACTION_FAILURE} ${err.message}` : LOCAL_EXTRACTION_FAILURE, pageMappingApproximate: true };
+    await pdf.destroy();
+    const text = pageTexts.map((page, index) => `--- Page ${index + 1} ---\n${page}`).join('\n\n');
+    const readablePages = pageTexts.filter(page => page.trim().length >= 10).length;
+    if (readablePages === 0) {
+      return { text: '', pageCount: pageTexts.length, pageTexts, status: 'needs_review', confidence: 0, readStatus: 'no_selectable_text', parser: 'pdfjs', warnings: [NO_TEXT], warning: NO_TEXT, error: NO_TEXT, pageMappingApproximate: false };
+    }
+    const partial = readablePages < pageTexts.length;
+    const warnings = partial ? [`${pageTexts.length - readablePages} page(s) contained no selectable text and may require OCR.`] : [];
+    return { text, pageCount: pageTexts.length, pageTexts, status: partial ? 'needs_review' : 'succeeded', confidence: partial ? 0.75 : 0.98, readStatus: partial ? 'partial_text' : 'readable_text', parser: 'pdfjs', warnings, warning: warnings[0], pageMappingApproximate: false };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown PDF.js error';
+    return { text: '', pageCount: 0, pageTexts: [], status: 'failed', confidence: 0, readStatus: 'failed', parser: 'pdfjs', warnings: [`PDF.js could not read this file: ${message}`], error: `PDF.js could not read this file: ${message}`, pageMappingApproximate: false };
   }
 }

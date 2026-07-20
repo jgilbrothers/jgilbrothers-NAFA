@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nafa-ledger-v1';
+const CACHE_NAME = 'nafa-ledger-v2-evidence-ingestion';
 const PRE_CACHE_ASSETS = [
   './',
   './index.html',

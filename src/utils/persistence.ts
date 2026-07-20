@@ -45,6 +45,7 @@ export interface WorkspaceState {
   chatLog: ChatMessage[];
   jurisdiction: string;
   profile?: LocalWorkspaceProfile;
+  reportMetadata?: unknown;
 }
 
 const getDefaultWorkspaceState = (name = 'New Project', note = '', jurisdiction = 'North Carolina', county = 'Durham County'): WorkspaceState => {

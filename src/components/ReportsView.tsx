@@ -52,9 +52,11 @@ interface ReportsViewProps {
   transactions: Transaction[];
   accounts: AccountSummary[];
   documents?: DocumentRecord[];
+  workspaceId: string;
 }
 
-export default function ReportsView({ transactions, accounts, documents = [] }: ReportsViewProps) {
+export default function ReportsView({ transactions, accounts, documents = [], workspaceId }: ReportsViewProps) {
+  const reportStorageKey = `nafa_saved_reported_sessions_v1_${workspaceId}`;
   // Report metadata states
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
@@ -93,7 +95,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
   // Local report history sessions persistence
   const [savedSessions, setSavedSessions] = useState<SavedReportSession[]>(() => {
     try {
-      const raw = localStorage.getItem('nafa_saved_reported_sessions_v1');
+      const raw = localStorage.getItem(reportStorageKey) || localStorage.getItem('nafa_saved_reported_sessions_v1');
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -143,7 +145,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
 
     const updated = [newSession, ...savedSessions];
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    localStorage.setItem(reportStorageKey, JSON.stringify(updated));
     setSessionDraftName('');
     triggerSuccessNotification('Saved report configuration saved to local workstations history');
   };
@@ -175,7 +177,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
     e.stopPropagation();
     const updated = savedSessions.filter(s => s.id !== id);
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    localStorage.setItem(reportStorageKey, JSON.stringify(updated));
     triggerSuccessNotification('Removed report session from workspace history');
   };
 
@@ -498,9 +500,8 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
         <head>
           <title>${caseTitle} - Comprehensive Financial Summary</title>
           <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
             body {
-              font-family: 'Inter', sans-serif;
+              font-family: Arial, Helvetica, sans-serif;
               color: #0f172a;
               margin: 40px;
               line-height: 1.4;

@@ -46,6 +46,8 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
+import { verifiedTransactionsOnly } from './utils/verifiedTransactions';
+import { exportProjectArchive, inspectProjectArchive, restoreProjectArchive } from './utils/projectArchive';
 import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
@@ -350,6 +352,45 @@ export default function App() {
     }
   };
 
+  const handleExportCompleteArchive = async (onProgress?: (completed: number, total: number) => void): Promise<void> => {
+    const reportMetadata = JSON.parse(localStorage.getItem(`nafa_saved_reported_sessions_v1_${activeWorkspaceId}`) || '[]');
+    const state = { accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile, reportMetadata };
+    const blob = await exportProjectArchive(activeWorkspaceId, state, onProgress);
+    const safeName = (profile?.workspaceName || 'nafa-project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'nafa-project';
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeName}.nafa.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    appendAuditLog('EXPORT_COMPLETE_ARCHIVE', `Exported complete project archive with ${documents.length} document records.`, 'info');
+  };
+
+  const handleImportCompleteArchive = async (file: File): Promise<string> => {
+    const inspected = await inspectProjectArchive(file);
+    const incoming = inspected.workspace;
+    const originalName = incoming.profile?.workspaceName || incoming.profile?.caseProjectName || 'Imported Project';
+    const summary = `${incoming.documents.length} documents, ${incoming.transactions.length} transactions, ${inspected.manifest.files.length} original source files`;
+    if (!confirm(`Import “${originalName}” as a new project?\n\n${summary}\n\nThe current project will not be overwritten.`)) throw new Error('Archive import cancelled.');
+    const importName = `${originalName} (Imported)`;
+    const newWorkspaceId = createNewWorkspace(importName, incoming.profile?.projectNote || '', incoming.profile?.jurisdiction || incoming.jurisdiction || 'North Carolina', incoming.profile?.county || 'Durham County');
+    setActiveWorkspaceId(newWorkspaceId);
+    setActiveWorkspaceIdState(newWorkspaceId);
+    const idPrefix = newWorkspaceId.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const documentIdMap = Object.fromEntries(incoming.documents.map((document, index) => [document.id, `DOC-IMPORT-${idPrefix}-${index + 1}`]));
+    const restored = await restoreProjectArchive(file, documentIdMap);
+    restored.documents = restored.documents.map(document => ({ ...document, project_id: newWorkspaceId }));
+    restored.profile = { ...(restored.profile || { userDisplayName: 'Local User', jurisdiction: restored.jurisdiction, createdAt: new Date().toISOString(), appVersion }), workspaceName: importName, caseProjectName: importName, lastOpenedAt: new Date().toISOString() };
+    saveWorkspace(restored);
+    if (restored.reportMetadata) localStorage.setItem(`nafa_saved_reported_sessions_v1_${newWorkspaceId}`, JSON.stringify(restored.reportMetadata));
+    applyWorkspaceState(restored);
+    setWorkspaceSummaries(getWorkspaceSummaries());
+    setHasOpenedProject(true);
+    return `Imported ${summary} into new project “${importName}”. All manifest checksums passed.`;
+  };
+
   // Shared Tab redirection with dynamic search text state passing
   const handleViewExtractedTransactions = (docId: string) => {
     setLedgerSearchFilter(docId);
@@ -402,9 +443,10 @@ export default function App() {
   };
 
   // Recalculates metrics on every state adjustment automatically
+  const verifiedTransactions = useMemo(() => verifiedTransactionsOnly(transactions), [transactions]);
   const aggregates = useMemo(() => {
-    return calculateAggregates(accounts, transactions);
-  }, [accounts, transactions]);
+    return calculateAggregates(accounts, verifiedTransactions);
+  }, [accounts, verifiedTransactions]);
 
   // Unresolved low-confidence flags calculation for indicators
   const unresolvedReviewCount = useMemo(() => {
@@ -1215,7 +1257,7 @@ export default function App() {
               {activeTab === 'dashboard' && (
                 <DashboardView 
                   accounts={accounts}
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   aggregates={aggregates}
                   documents={documents}
                   onNavigate={(tab) => setActiveTab(tab)}
@@ -1271,7 +1313,7 @@ export default function App() {
               {activeTab === 'ai-chat' && (
                 <AiAnalysisWorkspace
                   chatLog={chatLog}
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   onSendMessage={handleSendMessage}
                   onClearChat={() => setChatLog([])}
                 />
@@ -1279,9 +1321,10 @@ export default function App() {
 
               {activeTab === 'reports' && (
                 <ReportsView
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   accounts={accounts}
                   documents={documents}
+                  workspaceId={activeWorkspaceId}
                 />
               )}
 
@@ -1310,6 +1353,8 @@ export default function App() {
                   jurisdiction={jurisdiction}
                   onChangeJurisdiction={(j) => setJurisdiction(j)}
                   onExportBackup={handleExportBackup}
+                  onExportCompleteArchive={handleExportCompleteArchive}
+                  onImportCompleteArchive={handleImportCompleteArchive}
                   onImportBackup={handleImportBackup}
                   onClearStoredFilesOnly={handleClearStoredFilesOnly}
                   workspaceName={profile?.workspaceName || 'Local Workspace'}

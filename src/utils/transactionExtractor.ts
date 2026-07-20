@@ -19,6 +19,10 @@ export interface TransactionCandidate {
   excluded?: boolean;
   note?: string;
   source?: 'PDF_TEXT' | 'OCR' | 'MANUAL';
+  sourceExcerpt?: string;
+  extractionEngine?: string;
+  extractionTimestamp?: string;
+  verificationStatus?: 'extracted' | 'needs_review' | 'confirmed' | 'corrected' | 'excluded' | 'disputed';
 }
 
 export interface TransactionExtractionContext {
@@ -218,6 +222,10 @@ export function extractTransactionCandidates(
         sourcePage: context?.sourcePagesApproximate ? undefined : pageIndex + 1,
         sourcePageApproximate: Boolean(context?.sourcePagesApproximate),
         sourceLine: lineIndex + 1,
+        sourceExcerpt: clean.slice(0, 500),
+        extractionEngine: context?.sourcePagesApproximate ? 'ocr-or-approximate-text' : 'pdfjs',
+        extractionTimestamp: new Date().toISOString(),
+        verificationStatus: needsReview ? 'needs_review' : 'extracted',
         confidenceScore: needsReview ? 0.55 : effectiveDate ? 0.9 : 0.86,
         needsReview,
         reviewReason: reviewReasons.join('; ') || (normalizedDate.inferredYear ? 'year inferred from statement period' : undefined),

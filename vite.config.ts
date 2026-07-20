@@ -6,6 +6,20 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('recharts') || id.includes('/d3-')) return 'charts';
+            if (id.includes('react-dom') || id.includes('/react/')) return 'react-vendor';
+            if (id.includes('lucide-react')) return 'icons';
+            if (id.includes('motion')) return 'motion';
+            return undefined;
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
