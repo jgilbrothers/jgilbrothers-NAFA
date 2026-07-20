@@ -738,14 +738,11 @@ export default function DocumentsView({
         const file = new File([stored.blob], stored.originalFileName || doc.filename, { type: stored.mimeType });
         const result = await ingestDocument(file);
         const parser = result.kind === 'docx' ? 'mammoth' as const : 'xlsx' as const;
-        const saved = { documentId: doc.id, text: result.text, pageTexts: result.pages.map(page => page.text), pageCount: result.pages.length || 1, updatedAt: new Date().toISOString(), pageMappingApproximate: result.pageMapping !== 'exact', parser, warnings: result.warnings, structuredData: result.structuredData };
-        await saveExtractedText(saved);
-        setExtractedText(result.text);
+        let structuredData = result.structuredData;
         if (result.kind === 'docx' && ['Court Document', 'Legal Order', 'Other'].includes(doc.file_type)) {
           const candidates = extractLegalCandidates(doc.id, result.pages.map(page => page.text));
           setLegalCandidates(candidates);
-          saved.structuredData = { legalCandidates: candidates };
-          await saveExtractedText(saved);
+          structuredData = { legalCandidates: candidates };
         }
         if (result.kind === 'xlsx') {
           const sheets = result.structuredData as Record<string, unknown[][]>;
@@ -753,10 +750,13 @@ export default function DocumentsView({
           const firstSheet = Object.keys(sheets || {})[0] || '';
           setSelectedWorkbookSheet(firstSheet);
           setWorkbookHeaderRow(1);
-          setWorkbookCandidates(firstSheet ? buildSpreadsheetRowCandidates(doc.id, firstSheet, sheets[firstSheet] || [], 1) : []);
-          saved.structuredData = { sheets, selection: { sheetName: firstSheet, headerRow: 1 }, candidates: firstSheet ? buildSpreadsheetRowCandidates(doc.id, firstSheet, sheets[firstSheet] || [], 1) : [] };
-          await saveExtractedText(saved);
+          const candidates = firstSheet ? buildSpreadsheetRowCandidates(doc.id, firstSheet, sheets[firstSheet] || [], 1) : [];
+          setWorkbookCandidates(candidates);
+          structuredData = { sheets, selection: { sheetName: firstSheet, headerRow: 1 }, candidates };
         }
+        const saved = { documentId: doc.id, text: result.text, pageTexts: result.pages.map(page => page.text), pageCount: result.pages.length || 1, updatedAt: new Date().toISOString(), pageMappingApproximate: result.pageMapping !== 'exact', parser, warnings: result.warnings, structuredData };
+        await saveExtractedText(saved);
+        setExtractedText(result.text);
         const documentTextSource: 'docx' | 'xlsx' = result.kind === 'docx' ? 'docx' : 'xlsx';
         const updates: Partial<DocumentRecord> = { text_read: Boolean(result.text), text_read_at: new Date().toISOString(), extracted_text_available: Boolean(result.text), extracted_text_id: doc.id, text_source: documentTextSource, text_parser: parser, text_extraction_status: result.status === 'failed' ? 'failed' : result.status === 'needs_review' ? 'needs_review' : 'succeeded', text_extraction_error: result.status === 'failed' ? result.warnings.join(' ') : undefined, extraction_engine: result.engine, extraction_timestamp: new Date().toISOString(), extraction_warnings: result.warnings, processing_status: 'Requires Verification' };
         onUpdateDocument?.(doc.id, updates);

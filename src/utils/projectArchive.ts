@@ -1,6 +1,6 @@
 import type { WorkspaceState } from './persistence';
-import { getAllUploadedFiles, restoreUploadedFile } from './fileStorage';
-import { getAllExtractedTexts, saveExtractedText } from './extractedTextStorage';
+import { getUploadedFile, restoreUploadedFile } from './fileStorage';
+import { getExtractedText, saveExtractedText } from './extractedTextStorage';
 import { sha256 } from './fileIntegrity';
 
 export const ARCHIVE_SCHEMA_VERSION = 'nafa-archive-v1';
@@ -11,27 +11,33 @@ export async function exportProjectArchive(workspaceId: string, state: Workspace
   const zip = new JSZip();
   const workspaceJson = JSON.stringify(state, null, 2);
   zip.file('workspace.json', workspaceJson);
-  const documentIds = new Set(state.documents.map(document => document.id));
-  const files = (await getAllUploadedFiles()).filter(file => documentIds.has(file.documentId));
-  const texts = (await getAllExtractedTexts()).filter(text => documentIds.has(text.documentId));
-  const missingExpectedFiles = state.documents.filter(document => document.source_file_status === 'stored' && !files.some(file => file.documentId === document.id));
-  if (missingExpectedFiles.length) throw new Error(`Complete archive stopped: ${missingExpectedFiles.length} document(s) claim a stored source file but the blob is absent.`);
   const manifest: ArchiveManifest = { schemaVersion: ARCHIVE_SCHEMA_VERSION, createdAt: new Date().toISOString(), workspaceId, files: [], artifacts: [{ path: 'workspace.json', sha256: await sha256(new Blob([workspaceJson])), size: new Blob([workspaceJson]).size }] };
   let complete = 0;
-  const total = files.length + texts.length;
-  for (const file of files) {
-    const checksum = await sha256(file.blob);
-    const path = `source-files/${file.documentId}/${encodeURIComponent(file.originalFileName)}`;
-    zip.file(path, await file.blob.arrayBuffer());
-    zip.file(`source-files/${file.documentId}/metadata.json`, JSON.stringify({ ...file, blob: undefined, sha256: checksum }, null, 2));
-    manifest.files.push({ path, documentId: file.documentId, sha256: checksum, size: file.blob.size });
+  const total = state.documents.length * 2;
+  for (const document of state.documents) {
+    const file = await getUploadedFile(document.id).catch(error => {
+      if (document.source_file_status === 'stored') throw new Error(`Complete archive stopped: the retained source file for ${document.filename || document.id} could not be read. ${error instanceof Error ? error.message : ''}`.trim());
+      return undefined;
+    });
+    if (document.source_file_status === 'stored' && !file?.blob) {
+      throw new Error(`Complete archive stopped: ${document.filename || document.id} claims a retained source file, but its stored bytes are missing.`);
+    }
+    if (file?.blob) {
+      const checksum = await sha256(file.blob);
+      const path = `source-files/${file.documentId}/${encodeURIComponent(file.originalFileName)}`;
+      zip.file(path, await file.blob.arrayBuffer());
+      zip.file(`source-files/${file.documentId}/metadata.json`, JSON.stringify({ ...file, blob: undefined, sha256: checksum }, null, 2));
+      manifest.files.push({ path, documentId: file.documentId, sha256: checksum, size: file.blob.size });
+    }
     onProgress?.(++complete, total);
-  }
-  for (const text of texts) {
-    const path = `extracted-text/${text.documentId}.json`;
-    const contents = JSON.stringify(text, null, 2);
-    zip.file(path, contents);
-    manifest.artifacts.push({ path, sha256: await sha256(new Blob([contents])), size: new Blob([contents]).size });
+
+    const text = await getExtractedText(document.id).catch(() => undefined);
+    if (text) {
+      const path = `extracted-text/${text.documentId}.json`;
+      const contents = JSON.stringify(text, null, 2);
+      zip.file(path, contents);
+      manifest.artifacts.push({ path, sha256: await sha256(new Blob([contents])), size: new Blob([contents]).size });
+    }
     onProgress?.(++complete, total);
   }
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
@@ -46,8 +52,8 @@ export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: Arc
   if (!manifestEntry || !workspaceEntry) throw new Error('Archive is missing manifest.json or workspace.json.');
   const manifest = JSON.parse(await manifestEntry.async('text')) as ArchiveManifest;
   if (manifest.schemaVersion !== ARCHIVE_SCHEMA_VERSION) throw new Error(`Unsupported archive schema: ${manifest.schemaVersion}`);
-  const workspace = JSON.parse(await workspaceEntry.async('text')) as WorkspaceState;
-  if (!Array.isArray(workspace.documents) || !Array.isArray(workspace.transactions)) throw new Error('Archive workspace data is invalid.');
+  const workspace: unknown = JSON.parse(await workspaceEntry.async('text'));
+  if (!isValidWorkspaceState(workspace)) throw new Error('Archive workspace data is invalid: required project collections are missing or malformed.');
   for (const expected of manifest.files) {
     const entry = zip.file(expected.path);
     if (!entry) throw new Error(`Archive source file is missing: ${expected.path}`);
@@ -62,6 +68,14 @@ export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: Arc
   }
   return { manifest, workspace, zip };
 }
+
+const isPlainObject = (value: unknown): value is Record<string, any> => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const isValidWorkspaceState = (value: unknown): value is WorkspaceState => {
+  if (!isPlainObject(value)) return false;
+  return ['accounts', 'documents', 'transactions', 'rules', 'reconItems', 'auditLogs', 'chatLog'].every(key => Array.isArray(value[key]))
+    && typeof value.jurisdiction === 'string';
+};
 
 export async function restoreProjectArchive(blob: Blob, documentIdMap: Record<string, string> = {}): Promise<WorkspaceState> {
   const { manifest, workspace, zip } = await inspectProjectArchive(blob);
@@ -78,7 +92,7 @@ export async function restoreProjectArchive(blob: Blob, documentIdMap: Record<st
     const entry = zip.file(`extracted-text/${originalDocumentId}.json`);
     if (entry) {
       const extracted = JSON.parse(await entry.async('text'));
-      const structuredData = extracted.structuredData && typeof extracted.structuredData === 'object' ? {
+      const structuredData = isPlainObject(extracted.structuredData) ? {
         ...extracted.structuredData,
         candidates: Array.isArray(extracted.structuredData.candidates) ? extracted.structuredData.candidates.map((candidate: any) => ({ ...candidate, documentId: targetDocumentId })) : extracted.structuredData.candidates,
         legalCandidates: Array.isArray(extracted.structuredData.legalCandidates) ? extracted.structuredData.legalCandidates.map((candidate: any) => ({ ...candidate, documentId: targetDocumentId })) : extracted.structuredData.legalCandidates,

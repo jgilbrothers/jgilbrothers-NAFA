@@ -14,6 +14,30 @@ const signatures = {
   webp: (b: Uint8Array) => String.fromCharCode(...b.slice(0, 4)) === 'RIFF' && String.fromCharCode(...b.slice(8, 12)) === 'WEBP',
 };
 
+export function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') { cell += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (character === ',' && !quoted) {
+      row.push(cell.trim()); cell = '';
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && text[index + 1] === '\n') index += 1;
+      row.push(cell.trim());
+      if (row.some(value => value.length > 0)) rows.push(row);
+      row = []; cell = '';
+    } else cell += character;
+  }
+  row.push(cell.trim());
+  if (row.some(value => value.length > 0)) rows.push(row);
+  return rows;
+}
+
 export async function routeDocument(file: File): Promise<IngestionKind> {
   const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
   const name = file.name.toLowerCase();
@@ -39,7 +63,7 @@ export async function ingestDocument(file: File, signal?: AbortSignal): Promise<
   }
   if (kind === 'text' || kind === 'csv') {
     const text = await file.text();
-    const rows = kind === 'csv' ? text.split(/\r?\n/).filter(Boolean).map(line => line.split(',').map(cell => cell.trim().replace(/^"|"$/g, ''))) : undefined;
+    const rows = kind === 'csv' ? parseCsvRows(text) : undefined;
     return { kind, checksum, status: 'read', engine: kind === 'csv' ? 'xlsx-csv' : 'browser-text', pages: [{ page: 1, text, engine: kind === 'csv' ? 'xlsx-csv' : 'browser-text' }], text, warnings: kind === 'csv' ? ['Rows are candidates only and are not imported until confirmed.'] : [], structuredData: rows, pageMapping: 'exact' };
   }
   if (kind === 'docx') {

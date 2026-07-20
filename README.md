@@ -67,4 +67,6 @@ Before real records, follow [the manual acceptance checklist](docs/MANUAL_ACCEPT
 
 Known limits: DOCX has no inherent PDF-style page mapping; spreadsheet row confirmation remains intentionally manual; large OCR/archive jobs depend on device memory and can be slow on mobile hardware; OCR assets add roughly 30 MB to a deployment; and generated reports remain organizational work product rather than proof of admissibility.
 
+For the committed fictional fixture inventory, automated coverage, production-browser procedure, Cloudflare preview checks, privacy inspection, and known limitations, see [Pre-Merge Synthetic Acceptance Testing](docs/SYNTHETIC_ACCEPTANCE.md).
+
 The processing libraries are lazy-loaded: PDF.js only for PDF work, Tesseract only when OCR starts, Mammoth only for DOCX, SheetJS only for CSV/XLSX, and JSZip only for complete archives. PDF/OCR workers, language data, cores, and standard fonts are served from the same application origin and can be cached by the service worker after first use.

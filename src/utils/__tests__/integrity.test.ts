@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findDuplicateHash, sha256 } from '../fileIntegrity';
 import { routeDocument } from '../documentIngestion';
 import { extractTransactionCandidates } from '../transactionExtractor';
@@ -7,12 +7,24 @@ import { verifiedTransactionsOnly } from '../verifiedTransactions';
 import type { Transaction } from '../../types';
 
 describe('document integrity and routing', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('matches the known SHA-256 digest for a fixed synthetic payload', async () => {
+    expect(await sha256(new Blob(['abc']))).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  });
+
+  it('fails clearly when secure Web Crypto is unavailable', async () => {
+    vi.stubGlobal('crypto', undefined);
+    await expect(sha256(new Blob(['synthetic']))).rejects.toThrow(/HTTPS or localhost/);
+  });
+
   it('hashes identical bytes identically despite different filenames', async () => {
     const first = new File(['private synthetic fixture'], 'first.txt', { type: 'text/plain' });
     const second = new File(['private synthetic fixture'], 'renamed.bin');
     const hash = await sha256(first);
     expect(await sha256(second)).toBe(hash);
     expect(findDuplicateHash(hash, [{ id: 'one', sha256: hash }])?.id).toBe('one');
+    expect(findDuplicateHash(await sha256(new Blob(['changed bytes'])), [{ id: 'one', sha256: hash }])).toBeUndefined();
   });
 
   it('uses file signatures before extensions and preserves unsupported files', async () => {

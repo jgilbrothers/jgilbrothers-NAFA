@@ -1,0 +1,58 @@
+{
+  "disclaimer": "SYNTHETIC TEST DOCUMENT — NOT A REAL RECORD — NOT FOR COURT USE",
+  "textPdf": {
+    "pages": 2,
+    "accountEnding": "0000",
+    "statementPeriod": [
+      "2026-01-28",
+      "2026-02-28"
+    ],
+    "transactionCount": 9,
+    "closingBalance": 2041.87
+  },
+  "scannedPdf": {
+    "pages": 2,
+    "importantTokens": [
+      "EXAMPLE BANK",
+      "SCAN PAGE ONE",
+      "SCAN PAGE TWO",
+      "03/06/2026"
+    ]
+  },
+  "receipt": {
+    "merchant": "EXAMPLE CORNER MARKET",
+    "date": "2026-03-07",
+    "total": 10.26,
+    "ending": "0000"
+  },
+  "legalOrder": {
+    "caseId": "TEST-CASE-001",
+    "kinds": [
+      "allegation",
+      "finding",
+      "order"
+    ]
+  },
+  "legalNarrative": {
+    "caseId": "TEST-CASE-002",
+    "forbiddenKinds": [
+      "finding",
+      "order"
+    ]
+  },
+  "workbook": {
+    "sheets": [
+      "Transactions",
+      "Accounts",
+      "Notes"
+    ],
+    "headerRow": 2,
+    "candidateRows": [
+      3,
+      4,
+      6,
+      7,
+      8
+    ]
+  }
+}

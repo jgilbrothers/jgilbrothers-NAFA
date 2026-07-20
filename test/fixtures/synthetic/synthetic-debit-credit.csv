@@ -1,0 +1,7 @@
+SYNTHETIC TEST DOCUMENT — NOT A REAL RECORD — NOT FOR COURT USE
+Date,Description,Debit,Credit
+06/03/2026,Example Utility,75.00,
+2026-06-04,Example Refund,,10.00
+,Blank date test,4.00,
+malformed-row
+2026-06-05,Café Example UTF-8,3.50,

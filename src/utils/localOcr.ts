@@ -7,7 +7,8 @@ export const isImageOcrSupported = (mimeType = '', filename = '') => mimeType.st
 export const isPdfOcrCandidate = (mimeType = '', filename = '') => mimeType.includes('pdf') || filename.toLowerCase().endsWith('.pdf');
 
 export const getLocalOcrAssetPaths = () => {
-  const base = new URL(`${(import.meta as any).env?.BASE_URL || '/'}ocr/`, window.location.origin).href;
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  const base = new URL(`${(import.meta as any).env?.BASE_URL || '/'}ocr/`, origin).href;
   return { workerPath: `${base}worker.min.js`, corePath: `${base}core/`, langPath: `${base}lang/` };
 };
 
