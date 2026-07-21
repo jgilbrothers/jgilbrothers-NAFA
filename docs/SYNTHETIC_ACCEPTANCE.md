@@ -2,6 +2,16 @@
 
 NAFA acceptance fixtures are fictional. They contain obvious labels such as **SYNTHETIC TEST DOCUMENT**, **NOT A REAL RECORD**, account ending `0000`, and `TEST-CASE-001`. They are not valid financial statements or legal process and must never be substituted for original records.
 
+## Archive compatibility and safety policy
+
+Complete project archives use `nafa-archive-v2`. Version 2 places each retained source-file metadata record inside the signed manifest artifact set, including its exact byte size and SHA-256 digest. Metadata also repeats the verified source digest, and restore validates the document ID, filename, MIME type, byte size, upload timestamp, and source digest before using any metadata value.
+
+Version 1 archives are intentionally rejected with instructions to re-export them from a compatible NAFA Ledger build. Version 1 did not checksum-protect file metadata, so silently treating it as version 2 would weaken the integrity boundary.
+
+Restore uses a validation-first, commit-second design. All paths, JSON, sizes, checksums, metadata, extracted text, ID mappings, and destination collisions are validated in memory before a write occurs. Source files and extracted text remain in separate IndexedDB databases, so a single browser transaction cannot span both stores. If a commit-stage storage error occurs, the importer tracks every new record and performs compensating rollback; it reports success only after all records commit.
+
+Browser-oriented archive limits are centralized in `ARCHIVE_LIMITS`: 1 GB compressed archive, 500 documents, 250 MB per source file, 25 MB workspace JSON, 25 MB per extracted-text artifact, 64 KiB per metadata record, 2 GB declared decompressed total, 512-character paths, and a 200:1 maximum per-entry compression ratio. These limits are designed for a private court-preparation workstation while rejecting unreasonable ZIP expansion and deceptive declarations.
+
 ## Fixture inventory
 
 `test/fixtures/synthetic/` contains:

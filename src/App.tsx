@@ -48,7 +48,7 @@ import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage,
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { verifiedTransactionsOnly } from './utils/verifiedTransactions';
 import { exportProjectArchive, inspectProjectArchive, restoreProjectArchive } from './utils/projectArchive';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, commitImportedWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, createWorkspaceId, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
 
@@ -375,15 +375,22 @@ export default function App() {
     const summary = `${incoming.documents.length} documents, ${incoming.transactions.length} transactions, ${inspected.manifest.files.length} original source files`;
     if (!confirm(`Import “${originalName}” as a new project?\n\n${summary}\n\nThe current project will not be overwritten.`)) throw new Error('Archive import cancelled.');
     const importName = `${originalName} (Imported)`;
-    const newWorkspaceId = createNewWorkspace(importName, incoming.profile?.projectNote || '', incoming.profile?.jurisdiction || incoming.jurisdiction || 'North Carolina', incoming.profile?.county || 'Durham County');
-    setActiveWorkspaceId(newWorkspaceId);
-    setActiveWorkspaceIdState(newWorkspaceId);
+    // Reserve identifiers in memory first. Persistent workspace state is not created
+    // until every archive record has validated and the local file restore succeeds.
+    const newWorkspaceId = createWorkspaceId();
     const idPrefix = newWorkspaceId.replace(/[^A-Z0-9]/gi, '').toUpperCase();
     const documentIdMap = Object.fromEntries(incoming.documents.map((document, index) => [document.id, `DOC-IMPORT-${idPrefix}-${index + 1}`]));
     const restored = await restoreProjectArchive(file, documentIdMap);
     restored.documents = restored.documents.map(document => ({ ...document, project_id: newWorkspaceId }));
     restored.profile = { ...(restored.profile || { userDisplayName: 'Local User', jurisdiction: restored.jurisdiction, createdAt: new Date().toISOString(), appVersion }), workspaceName: importName, caseProjectName: importName, lastOpenedAt: new Date().toISOString() };
-    saveWorkspace(restored);
+    try {
+      commitImportedWorkspace(newWorkspaceId, restored);
+    } catch (error) {
+      const restoredDocumentIds = restored.documents.map(document => document.id);
+      await Promise.all([deleteStoredFilesByDocumentIds(restoredDocumentIds), deleteExtractedTextsByDocumentIds(restoredDocumentIds)]);
+      throw error;
+    }
+    setActiveWorkspaceIdState(newWorkspaceId);
     if (restored.reportMetadata) localStorage.setItem(`nafa_saved_reported_sessions_v1_${newWorkspaceId}`, JSON.stringify(restored.reportMetadata));
     applyWorkspaceState(restored);
     setWorkspaceSummaries(getWorkspaceSummaries());

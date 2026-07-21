@@ -21,7 +21,7 @@ export interface WorkspaceSummary {
 }
 
 const getWorkspaceKey = (id: string) => `nafa_ledger_workspace_v3_${id}`;
-const createWorkspaceId = () => `WS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+export const createWorkspaceId = () => `WS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
 export interface LocalWorkspaceProfile {
   userDisplayName: string;
@@ -135,6 +135,27 @@ export function saveWorkspace(state: WorkspaceState): void {
     localStorage.setItem(STORAGE_KEY, rawData);
     upsertWorkspaceSummary(summarizeWorkspace(activeId, normalized));
   } catch (err) { console.error('Failed to serialize Nafa Workspace into local client storage:', err); }
+}
+
+export function commitImportedWorkspace(id: string, state: WorkspaceState): void {
+  const keys = [getWorkspaceKey(id), STORAGE_KEY, WORKSPACE_INDEX_KEY, ACTIVE_WORKSPACE_ID_KEY];
+  const previous = new Map(keys.map(key => [key, localStorage.getItem(key)]));
+  try {
+    const now = new Date().toISOString();
+    const normalized: WorkspaceState = { ...state, profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Imported Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
+    const rawData = JSON.stringify(normalized);
+    const currentSummaries = getWorkspaceSummaries().filter(summary => summary.id !== id);
+    localStorage.setItem(getWorkspaceKey(id), rawData);
+    localStorage.setItem(STORAGE_KEY, rawData);
+    localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify([summarizeWorkspace(id, normalized), ...currentSummaries]));
+    localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
+  } catch (error) {
+    for (const [key, value] of previous) {
+      if (value === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    }
+    throw new Error(`Imported workspace persistence failed and was rolled back. ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function loadWorkspace(): WorkspaceState | null {
