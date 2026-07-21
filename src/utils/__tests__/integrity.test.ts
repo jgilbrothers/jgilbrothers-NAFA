@@ -3,8 +3,10 @@ import { findDuplicateHash, sha256 } from '../fileIntegrity';
 import { routeDocument } from '../documentIngestion';
 import { extractTransactionCandidates } from '../transactionExtractor';
 import { extractLegalCandidates } from '../legalDocumentExtractor';
-import { verifiedTransactionsOnly } from '../verifiedTransactions';
+import { isVerifiedTransaction, migrateLegacyTransactions, verifiedTransactionsOnly } from '../verifiedTransactions';
 import type { Transaction } from '../../types';
+import { calculateAggregates } from '../dataEngine';
+import { MOCK_TRANSACTIONS } from '../../data/mockData';
 
 describe('document integrity and routing', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -35,6 +37,8 @@ describe('document integrity and routing', () => {
 });
 
 describe('traceability and confirmation gating', () => {
+  const transaction = (overrides: Partial<Transaction> = {}): Transaction => ({ transaction_id: 'legacy', transaction_date: '2026-01-01', raw_description: 'Synthetic', clean_vendor_name: 'Synthetic', amount: 10, transaction_type: 'debit', processing_method: 'Other', card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false, ...overrides });
+
   it('retains exact source page, line, excerpt, engine, and review state', () => {
     const candidates = extractTransactionCandidates('01/02 Coffee Shop 10.00', 'DOC-1', ['01/02 Coffee Shop 10.00'], { documentType: 'Checking Statement', statementPeriod: '12/15/2025 - 01/15/2026' });
     expect(candidates[0]).toMatchObject({ documentId: 'DOC-1', sourcePage: 1, sourceLine: 1, sourcePageApproximate: false, extractionEngine: 'pdfjs', verificationStatus: 'extracted' });
@@ -46,6 +50,34 @@ describe('traceability and confirmation gating', () => {
     const base = { transaction_id: 'x', transaction_date: '2026-01-01', raw_description: 'Synthetic', clean_vendor_name: 'Synthetic', amount: 10, transaction_type: 'debit', processing_method: 'Other', card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false } as Transaction;
     const items = ['extracted', 'needs_review', 'confirmed', 'corrected', 'disputed'].map((verification_status, index) => ({ ...base, transaction_id: `${index}`, verification_status } as Transaction));
     expect(verifiedTransactionsOnly(items).map(item => item.verification_status)).toEqual(['confirmed', 'corrected']);
+  });
+
+  it('migrates only persisted legacy records and remains idempotent', () => {
+    const original = transaction({ verification_status: undefined });
+    expect(isVerifiedTransaction(original)).toBe(false);
+    const migrated = migrateLegacyTransactions([original]);
+    expect(migrated[0]).toMatchObject({ transaction_id: 'legacy', verification_status: 'confirmed' });
+    expect(migrateLegacyTransactions(migrated)).toEqual(migrated);
+  });
+
+  it('keeps final states visible while excluding every non-final state', () => {
+    const records = [
+      transaction({ transaction_id: 'confirmed', verification_status: 'confirmed' }),
+      transaction({ transaction_id: 'corrected', verification_status: 'corrected' }),
+      transaction({ transaction_id: 'override', verification_status: 'needs_review', manual_override: true }),
+      transaction({ transaction_id: 'pending', verification_status: 'extracted' }),
+      transaction({ transaction_id: 'unconfirmed', verification_status: 'needs_review' }),
+      transaction({ transaction_id: 'rejected', verification_status: 'excluded' }),
+      transaction({ transaction_id: 'disputed', verification_status: 'disputed' }),
+      transaction({ transaction_id: 'fresh-statusless' }),
+    ];
+    expect(verifiedTransactionsOnly(records).map(item => item.transaction_id)).toEqual(['confirmed', 'corrected', 'override']);
+  });
+
+  it('preserves legacy totals after persistence migration and keeps sample data non-empty', () => {
+    const migrated = migrateLegacyTransactions([transaction({ amount: 42, category: 'Groceries' })]);
+    expect(calculateAggregates([], verifiedTransactionsOnly(migrated)).categorySpending).toEqual([{ name: 'Groceries', value: 42 }]);
+    expect(verifiedTransactionsOnly(migrateLegacyTransactions(MOCK_TRANSACTIONS)).length).toBe(MOCK_TRANSACTIONS.length);
   });
 });
 

@@ -46,11 +46,12 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { verifiedTransactionsOnly } from './utils/verifiedTransactions';
+import { migrateLegacyTransactions, verifiedTransactionsOnly } from './utils/verifiedTransactions';
 import { exportProjectArchive, inspectProjectArchive, restoreProjectArchive } from './utils/projectArchive';
 import { loadWorkspace, saveWorkspace, commitImportedWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, createWorkspaceId, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
+import { resolveReportSessions, writeReportSessions } from './utils/reportSessions';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -353,7 +354,7 @@ export default function App() {
   };
 
   const handleExportCompleteArchive = async (onProgress?: (completed: number, total: number) => void): Promise<void> => {
-    const reportMetadata = JSON.parse(localStorage.getItem(`nafa_saved_reported_sessions_v1_${activeWorkspaceId}`) || '[]');
+    const reportMetadata = resolveReportSessions(activeWorkspaceId);
     const state = { accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile, reportMetadata };
     const blob = await exportProjectArchive(activeWorkspaceId, state, onProgress);
     const safeName = (profile?.workspaceName || 'nafa-project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'nafa-project';
@@ -391,7 +392,7 @@ export default function App() {
       throw error;
     }
     setActiveWorkspaceIdState(newWorkspaceId);
-    if (restored.reportMetadata) localStorage.setItem(`nafa_saved_reported_sessions_v1_${newWorkspaceId}`, JSON.stringify(restored.reportMetadata));
+    if (Array.isArray(restored.reportMetadata)) writeReportSessions(newWorkspaceId, restored.reportMetadata);
     applyWorkspaceState(restored);
     setWorkspaceSummaries(getWorkspaceSummaries());
     setHasOpenedProject(true);
@@ -741,7 +742,7 @@ export default function App() {
   const handleLoadSampleDemoData = () => {
     setAccounts(MOCK_ACCOUNTS);
     setDocuments(MOCK_DOCUMENTS as any);
-    setTransactions(MOCK_TRANSACTIONS);
+    setTransactions(migrateLegacyTransactions(MOCK_TRANSACTIONS));
     setRules(MOCK_RULES);
     setReconItems(MOCK_RECON_ITEMS);
     setAuditLogs(MOCK_AUDIT_LOGS);

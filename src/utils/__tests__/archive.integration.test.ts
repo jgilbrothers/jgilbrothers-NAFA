@@ -85,6 +85,43 @@ describe('complete project archive lifecycle', () => {
     await expect(exportProjectArchive('MISSING', workspace('MISSING'))).rejects.toThrow(/claims a retained source file/);
   });
 
+  it('exports and restores checksum-verified extracted text without a source blob', async () => {
+    const state = workspace('TEXT-ONLY');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    await saveExtractedText({ documentId: 'DOC-TEXT-ONLY', text: 'synthetic retained text', pageTexts: ['synthetic retained text'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' });
+    const archive = await exportProjectArchive('TEXT-ONLY', state);
+    const inspected = await inspectProjectArchive(archive);
+    expect(inspected.manifest.files).toEqual([]);
+    expect(inspected.manifest.artifacts.some(item => item.path === 'extracted-text/DOC-TEXT-ONLY.json')).toBe(true);
+    await deleteExtractedText('DOC-TEXT-ONLY');
+    const restored = await restoreProjectArchive(archive, { 'DOC-TEXT-ONLY': 'DOC-TEXT-ONLY-RESTORED' });
+    expect(restored.documents[0]).toMatchObject({ id: 'DOC-TEXT-ONLY-RESTORED', source_file_status: 'unavailable', local_file: { stored: false } });
+    expect((await getExtractedText('DOC-TEXT-ONLY-RESTORED'))?.text).toBe('synthetic retained text');
+  });
+
+  it('round-trips a mixed stored, text-only, and unavailable project honestly', async () => {
+    const state = workspace('MIX-STORED');
+    state.documents = [
+      state.documents[0],
+      { ...state.documents[0], id: 'DOC-MIX-TEXT', filename: 'text-only.txt', source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } },
+      { ...state.documents[0], id: 'DOC-MIX-NONE', filename: 'unavailable.txt', source_file_status: 'metadata_only', local_file: { storage: 'indexeddb', stored: false } },
+    ];
+    await saveUploadedFile('DOC-MIX-STORED', new File(['stored synthetic'], 'synthetic.txt', { type: 'text/plain' }));
+    await saveExtractedText({ documentId: 'DOC-MIX-TEXT', text: 'text survives', pageTexts: ['text survives'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' });
+    const archive = await exportProjectArchive('MIXED', state);
+    const inspected = await inspectProjectArchive(archive);
+    expect(inspected.manifest.files.map(item => item.documentId)).toEqual(['DOC-MIX-STORED']);
+    await clearStoredFiles();
+    await deleteExtractedText('DOC-MIX-TEXT');
+    const restored = await restoreProjectArchive(archive, { 'DOC-MIX-STORED': 'DOC-MIX-STORED-R', 'DOC-MIX-TEXT': 'DOC-MIX-TEXT-R', 'DOC-MIX-NONE': 'DOC-MIX-NONE-R' });
+    expect(restored.documents.map(item => [item.id, item.source_file_status, item.local_file?.stored])).toEqual([
+      ['DOC-MIX-STORED-R', 'stored', true],
+      ['DOC-MIX-TEXT-R', 'unavailable', false],
+      ['DOC-MIX-NONE-R', 'metadata_only', false],
+    ]);
+    expect((await getExtractedText('DOC-MIX-TEXT-R'))?.text).toBe('text survives');
+  });
+
   it('round-trips 25 retained files and 1,000 structured rows without cross-project loading', async () => {
     const state = workspace('STRESS');
     state.documents = Array.from({ length: 25 }, (_, index) => ({ ...state.documents[0], id: `DOC-STRESS-${index + 1}`, filename: `synthetic-${index + 1}.txt` }));
@@ -142,6 +179,11 @@ describe('archive manifest runtime validation', () => {
       { path: 'source-files/DOC-1/a.txt', documentId: 'DOC-1', sha256: digest, size: 1 },
       { path: 'source-files/DOC-2/b.txt', documentId: 'DOC-1', sha256: digest, size: 1 },
     ], artifacts: [...validManifest().artifacts, metadata] })).toThrow(/duplicate documentId/);
+  });
+
+  it('allows text-only artifact IDs but rejects metadata without a retained source entry', () => {
+    expect(validateArchiveManifest({ ...validManifest(), artifacts: [...validManifest().artifacts, { path: 'extracted-text/DOC-TEXT.json', sha256: digest, size: 1 }] }).artifacts).toHaveLength(2);
+    expect(() => validateArchiveManifest({ ...validManifest(), artifacts: [...validManifest().artifacts, { path: 'source-files/DOC-NO-FILE/metadata.json', sha256: digest, size: 1 }] })).toThrow(/metadata artifact has no retained source file/);
   });
 
   it('enforces documented count and declared-size limits while accepting values below them', () => {
@@ -244,6 +286,37 @@ describe('metadata integrity and validation', () => {
 });
 
 describe('archive-wide trust boundaries', () => {
+  it('rejects extracted text and source files for unknown workspace documents', async () => {
+    const empty = { ...workspace('UNKNOWN'), documents: [] };
+    const workspaceJson = JSON.stringify(empty);
+    const extracted = JSON.stringify({ documentId: 'DOC-UNKNOWN', text: 'synthetic', pageTexts: ['synthetic'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' });
+    const zip = new JSZip();
+    zip.file('workspace.json', workspaceJson);
+    zip.file('extracted-text/DOC-UNKNOWN.json', extracted);
+    zip.file('manifest.json', JSON.stringify({ ...validManifest(), artifacts: [
+      { path: 'workspace.json', sha256: await sha256(new Blob([workspaceJson])), size: new Blob([workspaceJson]).size },
+      { path: 'extracted-text/DOC-UNKNOWN.json', sha256: await sha256(new Blob([extracted])), size: new Blob([extracted]).size },
+    ] }));
+    await expect(inspectProjectArchive(await zip.generateAsync({ type: 'blob' }))).rejects.toThrow(/unknown document ID DOC-UNKNOWN/);
+
+    const state = workspace('SOURCE-UNKNOWN');
+    await saveUploadedFile('DOC-SOURCE-UNKNOWN', new File(['source'], 'synthetic.txt'));
+    const sourceArchive = await exportProjectArchive('SOURCE-UNKNOWN', state);
+    const unknownSource = await rewriteArchive(sourceArchive, async (archiveZip, manifest) => {
+      const text = JSON.stringify({ ...state, documents: [] });
+      await replaceArtifact(archiveZip, manifest, 'workspace.json', text);
+    });
+    await expect(inspectProjectArchive(unknownSource)).rejects.toThrow(/unknown document ID DOC-SOURCE-UNKNOWN/);
+  });
+
+  it('migrates archive-restored legacy transactions without changing ledger facts', async () => {
+    const state = workspace('LEGACY-TX');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.transactions = [{ transaction_id: 'LEGACY-1', transaction_date: '2026-01-02', raw_description: 'Synthetic Legacy', clean_vendor_name: 'Synthetic Legacy', amount: 17, transaction_type: 'debit', processing_method: 'Other', card_or_account_suffix: '0000', category: 'Groceries', is_pending: false }];
+    const restored = await restoreProjectArchive(await exportProjectArchive('LEGACY-TX', state));
+    expect(restored.transactions[0]).toEqual({ ...state.transactions[0], verification_status: 'confirmed' });
+  });
+
   it('rejects a declared decompressed total above the browser safety limit', async () => {
     const zip = new JSZip();
     zip.file('workspace.json', '{}');

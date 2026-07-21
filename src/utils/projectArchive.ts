@@ -2,6 +2,7 @@ import type { WorkspaceState } from './persistence';
 import { deleteUploadedFile, getUploadedFile, restoreUploadedFile, type StoredUploadedFile } from './fileStorage';
 import { deleteExtractedText, getExtractedText, saveExtractedText, type StoredExtractedText } from './extractedTextStorage';
 import { sha256 } from './fileIntegrity';
+import { migrateLegacyTransactions } from './verifiedTransactions';
 
 export const ARCHIVE_SCHEMA_VERSION = 'nafa-archive-v2';
 export const ARCHIVE_LIMITS = Object.freeze({
@@ -120,7 +121,8 @@ export const validateArchiveManifest = (value: unknown): ArchiveManifest => {
     const metadataMatch = artifact.path.match(/^source-files\/([^/]+)\/metadata\.json$/);
     const extractedMatch = artifact.path.match(/^extracted-text\/([^/]+)\.json$/);
     const referencedId = metadataMatch?.[1] || extractedMatch?.[1];
-    if (!referencedId || !documentIds.has(referencedId)) invalidManifest(`artifact path is not associated with a manifest document: ${artifact.path}`);
+    if (!referencedId || !DOCUMENT_ID_PATTERN.test(referencedId)) invalidManifest(`artifact path has an invalid document reference: ${artifact.path}`);
+    if (metadataMatch && !documentIds.has(referencedId)) invalidManifest(`metadata artifact has no retained source file: ${artifact.path}`);
   }
   return { schemaVersion: ARCHIVE_SCHEMA_VERSION, createdAt: root.createdAt as string, workspaceId: root.workspaceId as string, files, artifacts };
 };
@@ -280,6 +282,10 @@ export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: Arc
     workspaceIds.add(document.id);
   }
   for (const file of manifest.files) if (!workspaceIds.has(file.documentId)) throw new Error(`Archive manifest references unknown document ID ${file.documentId}.`);
+  for (const artifact of manifest.artifacts) {
+    const extractedId = artifact.path.match(/^extracted-text\/([^/]+)\.json$/)?.[1];
+    if (extractedId && !workspaceIds.has(extractedId)) throw new Error(`Archive extracted-text artifact references unknown document ID ${extractedId}.`);
+  }
   for (const expected of [...manifest.files, ...manifest.artifacts]) await verifyEntry(zip, expected);
   return { manifest, workspace: structuredClone(workspace), zip };
 }
@@ -338,10 +344,12 @@ const prepareProjectArchive = async (blob: Blob, documentIdMap: Record<string, s
     preparedTexts.push({ ...(remapReferences(extracted, documentIdMap) as StoredExtractedText), documentId: targetDocumentId });
   }
   const restoredWorkspace = remapReferences(workspace, documentIdMap) as WorkspaceState;
+  restoredWorkspace.transactions = migrateLegacyTransactions(restoredWorkspace.transactions);
   restoredWorkspace.documents = workspace.documents.map(document => {
     const id = documentIdMap[document.id] || document.id;
     const restored = manifest.files.some(file => file.documentId === document.id);
-    return { ...remapReferences(document, documentIdMap) as typeof document, id, source_file_status: restored ? 'stored' : 'unavailable', local_file: { storage: 'indexeddb', stored: restored } };
+    const sourceStatus = restored ? 'stored' : document.source_file_status === 'metadata_only' ? 'metadata_only' : 'unavailable';
+    return { ...remapReferences(document, documentIdMap) as typeof document, id, source_file_status: sourceStatus, local_file: { storage: 'indexeddb', stored: restored } };
   });
   return { manifest, workspace: restoredWorkspace, zip, files: preparedFiles, texts: preparedTexts };
 };

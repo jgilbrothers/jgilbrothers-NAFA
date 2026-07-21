@@ -25,28 +25,9 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Transaction, AccountSummary, DocumentRecord } from '../types';
+import { resolveReportSessions, writeReportSessions, type SavedReportSession } from '../utils/reportSessions';
 
-export interface SavedReportSession {
-  id: string;
-  name: string;
-  timestamp: string;
-  caseTitle: string;
-  caseNumber: string;
-  clientName: string;
-  jurisdiction: string;
-  reportType: string;
-  selectedAccounts: string[];
-  selectedCategories: string[];
-  startDate: string;
-  endDate: string;
-  excludeDuplicates: boolean;
-  excludeTransfers: boolean;
-  excludeUnresolved: boolean;
-  includeCharts: boolean;
-  includeNarratives: boolean;
-  appendixMode: 'off' | 'condensed' | 'detailed';
-  customNotes?: string;
-}
+export type { SavedReportSession } from '../utils/reportSessions';
 
 interface ReportsViewProps {
   transactions: Transaction[];
@@ -56,7 +37,6 @@ interface ReportsViewProps {
 }
 
 export default function ReportsView({ transactions, accounts, documents = [], workspaceId }: ReportsViewProps) {
-  const reportStorageKey = `nafa_saved_reported_sessions_v1_${workspaceId}`;
   // Report metadata states
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
@@ -94,13 +74,12 @@ export default function ReportsView({ transactions, accounts, documents = [], wo
 
   // Local report history sessions persistence
   const [savedSessions, setSavedSessions] = useState<SavedReportSession[]>(() => {
-    try {
-      const raw = localStorage.getItem(reportStorageKey) || localStorage.getItem('nafa_saved_reported_sessions_v1');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
+    return resolveReportSessions(workspaceId);
   });
+
+  useEffect(() => {
+    setSavedSessions(resolveReportSessions(workspaceId));
+  }, [workspaceId]);
 
   const [sessionDraftName, setSessionDraftName] = useState('');
 
@@ -145,7 +124,7 @@ export default function ReportsView({ transactions, accounts, documents = [], wo
 
     const updated = [newSession, ...savedSessions];
     setSavedSessions(updated);
-    localStorage.setItem(reportStorageKey, JSON.stringify(updated));
+    writeReportSessions(workspaceId, updated);
     setSessionDraftName('');
     triggerSuccessNotification('Saved report configuration saved to local workstations history');
   };
@@ -177,7 +156,7 @@ export default function ReportsView({ transactions, accounts, documents = [], wo
     e.stopPropagation();
     const updated = savedSessions.filter(s => s.id !== id);
     setSavedSessions(updated);
-    localStorage.setItem(reportStorageKey, JSON.stringify(updated));
+    writeReportSessions(workspaceId, updated);
     triggerSuccessNotification('Removed report session from workspace history');
   };
 

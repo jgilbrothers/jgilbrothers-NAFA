@@ -1,5 +1,6 @@
 import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage } from '../types';
 import { ReconciliationItem } from './dataEngine';
+import { migrateLegacyTransactions } from './verifiedTransactions';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
 const WORKSPACE_INDEX_KEY = 'nafa_ledger_workspace_index_v1';
@@ -89,6 +90,7 @@ export function validateWorkspaceBackup(parsed: any): boolean {
 export function normalizeImportedWorkspaceState(state: WorkspaceState): WorkspaceState {
   return {
     ...state,
+    transactions: migrateLegacyTransactions(state.transactions || []),
     documents: (state.documents || []).map(doc => ({
       ...doc,
       source_file_status: doc.source_file_status === 'metadata_only' ? 'metadata_only' : 'unavailable',
@@ -121,7 +123,12 @@ export function getWorkspaceStateById(id: string): WorkspaceState | null {
     const raw = localStorage.getItem(getWorkspaceKey(id));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return validateWorkspaceBackup(parsed) ? parsed as WorkspaceState : null;
+    if (!validateWorkspaceBackup(parsed)) return null;
+    const migrated = { ...parsed, transactions: migrateLegacyTransactions(parsed.transactions) } as WorkspaceState;
+    if (migrated.transactions.some((transaction, index) => transaction !== parsed.transactions[index])) {
+      localStorage.setItem(getWorkspaceKey(id), JSON.stringify(migrated));
+    }
+    return migrated;
   } catch { return null; }
 }
 
@@ -142,7 +149,7 @@ export function commitImportedWorkspace(id: string, state: WorkspaceState): void
   const previous = new Map(keys.map(key => [key, localStorage.getItem(key)]));
   try {
     const now = new Date().toISOString();
-    const normalized: WorkspaceState = { ...state, profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Imported Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
+    const normalized: WorkspaceState = { ...state, transactions: migrateLegacyTransactions(state.transactions || []), profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Imported Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
     const rawData = JSON.stringify(normalized);
     const currentSummaries = getWorkspaceSummaries().filter(summary => summary.id !== id);
     localStorage.setItem(getWorkspaceKey(id), rawData);
@@ -167,6 +174,13 @@ export function loadWorkspace(): WorkspaceState | null {
     if (validateWorkspaceBackup(parsed)) {
       const now = new Date().toISOString();
       parsed.profile = { ...(parsed.profile || getDefaultWorkspaceState().profile), workspaceName: parsed.profile?.workspaceName || 'Local Project', jurisdiction: parsed.profile?.jurisdiction || parsed.jurisdiction || 'North Carolina', county: parsed.profile?.county || 'Durham County', lastOpenedAt: now };
+      const originalTransactions = parsed.transactions;
+      parsed.transactions = migrateLegacyTransactions(originalTransactions);
+      if (parsed.transactions.some((transaction: Transaction, index: number) => transaction !== originalTransactions[index])) {
+        const serialized = JSON.stringify(parsed);
+        localStorage.setItem(getWorkspaceKey(activeId), serialized);
+        localStorage.setItem(STORAGE_KEY, serialized);
+      }
       return parsed as WorkspaceState;
     }
   } catch (err) { console.warn('Stale workspace mapping detected during restore sequence:', err); }
