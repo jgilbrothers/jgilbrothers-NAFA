@@ -145,6 +145,9 @@ const assertSafeJson = (value: unknown, label: string, seen = new Set<object>())
 const requireString = (value: unknown, label: string): void => {
   if (typeof value !== 'string' || !value) throw new Error(`Archive workspace data is invalid: ${label} must be a non-empty string.`);
 };
+const requireStringType = (value: unknown, label: string): void => {
+  if (typeof value !== 'string') throw new Error(`Archive workspace data is invalid: ${label} must be a string.`);
+};
 const requireNumber = (value: unknown, label: string): void => {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Archive workspace data is invalid: ${label} must be a finite number.`);
 };
@@ -186,7 +189,8 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
   });
   accounts.forEach((value, index) => {
     const item = requireObject(value, `accounts[${index}]`);
-    for (const key of ['id', 'account_name', 'account_suffix', 'account_type', 'institution_name', 'statement_period', 'account_status']) requireString(item[key], `accounts[${index}].${key}`);
+    for (const key of ['id', 'account_name', 'account_suffix', 'account_type', 'statement_period', 'account_status']) requireString(item[key], `accounts[${index}].${key}`);
+    requireStringType(item.institution_name, `accounts[${index}].institution_name`);
     requireNumber(item.current_balance, `accounts[${index}].current_balance`);
     requireNumber(item.available_balance, `accounts[${index}].available_balance`);
   });

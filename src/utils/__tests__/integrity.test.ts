@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findDuplicateHash, sha256 } from '../fileIntegrity';
 import { routeDocument } from '../documentIngestion';
-import { extractTransactionCandidates } from '../transactionExtractor';
+import { extractTransactionCandidates, sourcePagesAreApproximate } from '../transactionExtractor';
 import { extractLegalCandidates } from '../legalDocumentExtractor';
 import { isVerifiedTransaction, migrateLegacyTransactions, verifiedTransactionsOnly } from '../verifiedTransactions';
 import type { Transaction } from '../../types';
@@ -71,7 +71,8 @@ describe('traceability and confirmation gating', () => {
       transaction({ transaction_id: 'disputed', verification_status: 'disputed' }),
       transaction({ transaction_id: 'fresh-statusless' }),
     ];
-    expect(verifiedTransactionsOnly(records).map(item => item.transaction_id)).toEqual(['confirmed', 'corrected', 'override']);
+    expect(verifiedTransactionsOnly(records).map(item => item.transaction_id)).toEqual(['confirmed', 'corrected']);
+    expect(isVerifiedTransaction(records[2])).toBe(false);
   });
 
   it('preserves legacy totals after persistence migration and keeps sample data non-empty', () => {
@@ -86,5 +87,27 @@ describe('legal candidate separation', () => {
     const candidates = extractLegalCandidates('LEGAL-1', ['Petitioner alleges funds were hidden. The court finds the account existed. It is ordered that records shall be produced.']);
     expect(candidates.map(candidate => candidate.kind)).toEqual(expect.arrayContaining(['allegation', 'finding', 'order']));
     expect(candidates.find(candidate => candidate.kind === 'allegation')?.verificationStatus).toBe('needs_review');
+  });
+
+  it('uses actual page mapping instead of fabricating DOCX or OCR citations', () => {
+    const text = ['Petitioner alleges funds were hidden.'];
+    expect(extractLegalCandidates('DOCX-1', text, 'none')[0].sourcePage).toBeUndefined();
+    expect(extractLegalCandidates('PDF-1', text, 'exact')[0].sourcePage).toBe(1);
+    expect(sourcePagesAreApproximate(false, true)).toBe(false);
+    expect(sourcePagesAreApproximate(true, false)).toBe(true);
+    expect(sourcePagesAreApproximate(undefined, undefined)).toBe(true);
+
+    const exactOcr = extractTransactionCandidates('01/02 Coffee Shop 10.00', 'PDF-OCR', ['01/02 Coffee Shop 10.00'], {
+      documentType: 'Checking Statement',
+      sourcePagesApproximate: sourcePagesAreApproximate(false, false),
+      statementPeriod: '12/15/2025 - 01/15/2026',
+    });
+    const approximate = extractTransactionCandidates('01/02 Coffee Shop 10.00', 'IMAGE-OCR', ['01/02 Coffee Shop 10.00'], {
+      documentType: 'Checking Statement',
+      sourcePagesApproximate: sourcePagesAreApproximate(true, true),
+      statementPeriod: '12/15/2025 - 01/15/2026',
+    });
+    expect(exactOcr[0].sourcePage).toBe(1);
+    expect(approximate[0].sourcePage).toBeUndefined();
   });
 });

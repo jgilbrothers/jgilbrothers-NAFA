@@ -40,6 +40,32 @@ describe('complete project archive lifecycle', () => {
     expect((await getExtractedText('DOC-ROUNDTRIP'))?.structuredData).toEqual({ Sheet1: [['Header'], ['Value']] });
   });
 
+  it('round-trips an account with an empty optional institution name while keeping required fields strict', async () => {
+    const state = workspace('EMPTY-INSTITUTION');
+    state.accounts = [{
+      id: 'ACC-EMPTY-INSTITUTION',
+      account_name: 'Synthetic Account',
+      account_suffix: '0000',
+      account_type: 'checking',
+      institution_name: '',
+      current_balance: 0,
+      available_balance: 0,
+      statement_period: 'Current Account Period',
+      account_status: 'Active',
+    }];
+    await saveUploadedFile('DOC-EMPTY-INSTITUTION', new File(['synthetic source'], 'synthetic.txt', { type: 'text/plain' }));
+    const archive = await exportProjectArchive('EMPTY-INSTITUTION', state);
+    await clearStoredFiles();
+    expect((await restoreProjectArchive(archive)).accounts[0].institution_name).toBe('');
+
+    const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+      const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+      parsed.accounts[0].account_name = '';
+      await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+    });
+    await expect(inspectProjectArchive(malformed)).rejects.toThrow(/account_name must be a non-empty string/);
+  });
+
   it('round-trips reserved and encoded source filenames without artifact collisions', async () => {
     const names = ['metadata.json', 'workspace.json', 'manifest.json', 'encoded name #%.json'];
     const state = workspace('RESERVED');

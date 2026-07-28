@@ -20,7 +20,7 @@ import { DocumentRecord, AccountSummary, Transaction } from '../types';
 import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/fileStorage';
 import { extractPdfText } from '../utils/pdfTextExtractor';
 import { deleteExtractedText, getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
-import { extractTransactionCandidates, TransactionCandidate } from '../utils/transactionExtractor';
+import { extractTransactionCandidates, sourcePagesAreApproximate, TransactionCandidate } from '../utils/transactionExtractor';
 import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, LOCAL_OCR_LOAD_ERROR, runLocalImageOcr } from '../utils/localOcr';
 import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
 import { getActiveWorkspaceId } from '../utils/persistence';
@@ -742,7 +742,7 @@ export default function DocumentsView({
         const parser = result.kind === 'docx' ? 'mammoth' as const : 'xlsx' as const;
         let structuredData = result.structuredData;
         if (result.kind === 'docx' && ['Court Document', 'Legal Order', 'Other'].includes(doc.file_type)) {
-          const candidates = extractLegalCandidates(doc.id, result.pages.map(page => page.text));
+          const candidates = extractLegalCandidates(doc.id, result.pages.map(page => page.text), result.pageMapping);
           setLegalCandidates(candidates);
           structuredData = { legalCandidates: candidates };
         }
@@ -1208,7 +1208,7 @@ export default function DocumentsView({
     const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
-      sourcePagesApproximate: doc.text_source === 'ocr' || doc.text_parser === 'lightweight-fallback' || stored?.pageMappingApproximate === true,
+      sourcePagesApproximate: sourcePagesAreApproximate(stored?.pageMappingApproximate, doc.page_mapping_approximate),
       statementPeriod: doc.statement_period,
     });
     setReviewRowsOpen(true);

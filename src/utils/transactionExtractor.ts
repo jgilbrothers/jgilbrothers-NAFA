@@ -32,6 +32,9 @@ export interface TransactionExtractionContext {
   statementPeriod?: string;
 }
 
+export const sourcePagesAreApproximate = (storedPageMappingApproximate?: boolean, documentPageMappingApproximate?: boolean): boolean =>
+  (storedPageMappingApproximate ?? documentPageMappingApproximate) !== false;
+
 const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?|[-+]?\$?\(?\d+\.\d{2}\)?-?)/g;
 const datePattern = /\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
 const shortDatePattern = /^\d{1,2}[\/-]\d{1,2}$/;
