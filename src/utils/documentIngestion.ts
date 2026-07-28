@@ -1,10 +1,35 @@
 import { extractPdfText } from './pdfTextExtractor';
 import { runLocalImageOcr } from './localOcr';
 import { sha256 } from './fileIntegrity';
+import type { DocumentRecord } from '../types';
 
 export type IngestionKind = 'pdf' | 'image' | 'text' | 'csv' | 'docx' | 'xlsx' | 'unsupported';
 export interface IngestedPage { page: number; text: string; confidence?: number; engine: string; }
 export interface IngestionResult { kind: IngestionKind; checksum: string; status: 'read' | 'needs_review' | 'stored_only' | 'failed'; engine: string; pages: IngestedPage[]; text: string; warnings: string[]; structuredData?: unknown; pageMapping: 'exact' | 'approximate' | 'none'; }
+
+export function officeIngestionDocumentUpdates(result: IngestionResult, timestamp = new Date().toISOString()): Partial<DocumentRecord> {
+  const supportedKind = result.kind === 'docx' || result.kind === 'xlsx';
+  const hasText = supportedKind && Boolean(result.text.trim());
+  const failed = !supportedKind || result.status === 'stored_only' || result.status === 'failed' || !hasText;
+  const warnings = result.warnings.length > 0
+    ? result.warnings
+    : [supportedKind ? 'The Office document did not contain readable text.' : 'The file could not be parsed as a supported DOCX or XLSX document.'];
+
+  return {
+    text_read: hasText,
+    text_read_at: timestamp,
+    extracted_text_available: hasText,
+    extracted_text_id: undefined,
+    text_source: hasText ? result.kind as 'docx' | 'xlsx' : undefined,
+    text_parser: hasText ? (result.kind === 'docx' ? 'mammoth' : 'xlsx') : undefined,
+    text_extraction_status: failed ? 'failed' : result.status === 'needs_review' ? 'needs_review' : 'succeeded',
+    text_extraction_error: failed ? warnings.join(' ') : undefined,
+    extraction_engine: result.engine,
+    extraction_timestamp: timestamp,
+    extraction_warnings: warnings,
+    processing_status: 'Requires Verification',
+  };
+}
 
 const signatures = {
   pdf: (b: Uint8Array) => String.fromCharCode(...b.slice(0, 5)) === '%PDF-',

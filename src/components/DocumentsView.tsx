@@ -19,12 +19,12 @@ import {
 import { DocumentRecord, AccountSummary, Transaction } from '../types';
 import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/fileStorage';
 import { extractPdfText } from '../utils/pdfTextExtractor';
-import { getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
+import { deleteExtractedText, getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
 import { extractTransactionCandidates, TransactionCandidate } from '../utils/transactionExtractor';
 import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, LOCAL_OCR_LOAD_ERROR, runLocalImageOcr } from '../utils/localOcr';
 import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
 import { getActiveWorkspaceId } from '../utils/persistence';
-import { ingestDocument } from '../utils/documentIngestion';
+import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
 import { mergePdfOcrResults, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
 import { buildSpreadsheetRowCandidates, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
 import { extractLegalCandidates, type LegalCandidate } from '../utils/legalDocumentExtractor';
@@ -737,6 +737,8 @@ export default function DocumentsView({
       try {
         const file = new File([stored.blob], stored.originalFileName || doc.filename, { type: stored.mimeType });
         const result = await ingestDocument(file);
+        const supportedOfficeResult = result.kind === 'docx' || result.kind === 'xlsx';
+        const hasExtractedText = supportedOfficeResult && Boolean(result.text.trim());
         const parser = result.kind === 'docx' ? 'mammoth' as const : 'xlsx' as const;
         let structuredData = result.structuredData;
         if (result.kind === 'docx' && ['Court Document', 'Legal Order', 'Other'].includes(doc.file_type)) {
@@ -754,17 +756,24 @@ export default function DocumentsView({
           setWorkbookCandidates(candidates);
           structuredData = { sheets, selection: { sheetName: firstSheet, headerRow: 1 }, candidates };
         }
-        const saved = { documentId: doc.id, text: result.text, pageTexts: result.pages.map(page => page.text), pageCount: result.pages.length || 1, updatedAt: new Date().toISOString(), pageMappingApproximate: result.pageMapping !== 'exact', parser, warnings: result.warnings, structuredData };
-        await saveExtractedText(saved);
-        setExtractedText(result.text);
-        const documentTextSource: 'docx' | 'xlsx' = result.kind === 'docx' ? 'docx' : 'xlsx';
-        const updates: Partial<DocumentRecord> = { text_read: Boolean(result.text), text_read_at: new Date().toISOString(), extracted_text_available: Boolean(result.text), extracted_text_id: doc.id, text_source: documentTextSource, text_parser: parser, text_extraction_status: result.status === 'failed' ? 'failed' : result.status === 'needs_review' ? 'needs_review' : 'succeeded', text_extraction_error: result.status === 'failed' ? result.warnings.join(' ') : undefined, extraction_engine: result.engine, extraction_timestamp: new Date().toISOString(), extraction_warnings: result.warnings, processing_status: 'Requires Verification' };
+        const timestamp = new Date().toISOString();
+        const updates = officeIngestionDocumentUpdates(result, timestamp);
+        if (hasExtractedText) {
+          const saved = { documentId: doc.id, text: result.text, pageTexts: result.pages.map(page => page.text), pageCount: result.pages.length || 1, updatedAt: timestamp, pageMappingApproximate: result.pageMapping !== 'exact', parser, warnings: result.warnings, structuredData };
+          await saveExtractedText(saved);
+          updates.extracted_text_id = doc.id;
+        } else {
+          await deleteExtractedText(doc.id).catch(() => undefined);
+        }
+        setExtractedText(hasExtractedText ? result.text : '');
         onUpdateDocument?.(doc.id, updates);
         setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-        result.status === 'failed' ? setErrorNotification(result.warnings.join(' ') || 'Document extraction failed.') : setSuccessNotification(`${result.kind.toUpperCase()} text loaded locally. Review it before using extracted candidates.`);
+        updates.text_extraction_status === 'failed' ? setErrorNotification(updates.text_extraction_error || 'Document extraction failed.') : setSuccessNotification(`${result.kind.toUpperCase()} text loaded locally. Review it before using extracted candidates.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Document extraction failed.';
-        const updates: Partial<DocumentRecord> = { text_extraction_status: 'failed', text_extraction_error: message, processing_status: 'Requires Verification' };
+        await deleteExtractedText(doc.id).catch(() => undefined);
+        setExtractedText('');
+        const updates: Partial<DocumentRecord> = { text_read: false, text_read_at: new Date().toISOString(), extracted_text_available: false, extracted_text_id: undefined, text_source: undefined, text_parser: undefined, text_extraction_status: 'failed', text_extraction_error: message, extraction_warnings: [message], processing_status: 'Requires Verification' };
         onUpdateDocument?.(doc.id, updates);
         setErrorNotification(message);
       } finally { setExtractionBusy(false); }

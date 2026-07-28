@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
-import { ingestDocument } from '../documentIngestion';
+import { ingestDocument, officeIngestionDocumentUpdates } from '../documentIngestion';
 import { extractPdfText } from '../pdfTextExtractor';
 import { mergePdfOcrResults, ocrPdfPages, unreadablePdfPages } from '../pdfPageOcr';
 import * as localOcr from '../localOcr';
 import { buildSpreadsheetRowCandidates } from '../spreadsheetCandidates';
+import { getUploadedFile, saveUploadedFile } from '../fileStorage';
 import { DOMParser } from '@xmldom/xmldom';
 
-Object.assign(globalThis, { DOMParser });
+Object.assign(globalThis, { DOMParser, window: { indexedDB: globalThis.indexedDB, location: { origin: 'http://localhost' } } });
 
 const makeTextPdf = async () => {
   const pdf = await PDFDocument.create();
@@ -52,6 +54,7 @@ describe('real ingestion interfaces', () => {
     const result = await ingestDocument(await makeDocx());
     expect(result.kind).toBe('docx');
     expect(result.text.indexOf('First synthetic')).toBeLessThan(result.text.indexOf('Second synthetic'));
+    expect(officeIngestionDocumentUpdates(result)).toMatchObject({ text_read: true, extracted_text_available: true, text_source: 'docx', text_parser: 'mammoth', text_extraction_status: 'succeeded' });
   });
 
   it('routes XLSX and retains sheet names and source row order', async () => {
@@ -60,7 +63,71 @@ describe('real ingestion interfaces', () => {
     expect(Object.keys(sheets)).toEqual(['Checking 0000', 'Legal Review']);
     expect(sheets['Checking 0000'][1]).toEqual(['2026-01-02', '12.34']);
     expect(result.status).toBe('needs_review');
+    expect(officeIngestionDocumentUpdates(result)).toMatchObject({ text_read: true, extracted_text_available: true, text_source: 'xlsx', text_parser: 'xlsx', text_extraction_status: 'needs_review' });
     expect(buildSpreadsheetRowCandidates('DOC-XLSX', 'Checking 0000', sheets['Checking 0000'], 1)[0]).toMatchObject({ documentId: 'DOC-XLSX', sheetName: 'Checking 0000', sourceRow: 2, headerRow: 1, verificationStatus: 'needs_review' });
+  });
+
+  it.each([
+    ['corrupt DOCX bytes', 'corrupt.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['corrupt XLSX bytes', 'corrupt.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['a non-ZIP file renamed as DOCX', 'renamed.docx', 'application/octet-stream'],
+    ['a non-ZIP file renamed as XLSX', 'renamed.xlsx', 'application/octet-stream'],
+  ])('preserves %s and records extraction as a review failure', async (_label, name, type) => {
+    const file = new File([new TextEncoder().encode('synthetic invalid Office content')], name, { type });
+    const documentId = `DOC-${name}-${type}`;
+    await saveUploadedFile(documentId, file);
+
+    const result = await ingestDocument(file);
+    const persistedRecord = JSON.parse(JSON.stringify({
+      id: documentId,
+      source_file_status: 'stored',
+      local_file: { storage: 'indexeddb', stored: true },
+      transactions_extracted: false,
+      transaction_candidate_count: 0,
+      confirmed_transaction_count: 0,
+      ...officeIngestionDocumentUpdates(result, '2026-07-28T12:00:00.000Z'),
+    }));
+
+    expect(result).toMatchObject({ kind: 'unsupported', status: 'stored_only', text: '' });
+    expect(persistedRecord).toMatchObject({
+      source_file_status: 'stored',
+      local_file: { storage: 'indexeddb', stored: true },
+      text_read: false,
+      extracted_text_available: false,
+      text_extraction_status: 'failed',
+      processing_status: 'Requires Verification',
+      transactions_extracted: false,
+      transaction_candidate_count: 0,
+      confirmed_transaction_count: 0,
+    });
+    expect(persistedRecord).not.toHaveProperty('extracted_text_id');
+    expect(persistedRecord).not.toHaveProperty('text_source');
+    expect(persistedRecord.text_extraction_error).toMatch(/not readable|could not be parsed|stored/i);
+    expect(await getUploadedFile(documentId)).toMatchObject({ documentId, originalFileName: name, size: file.size });
+  });
+
+  it('maps a synthetic unsupported Office result without falsely labeling it XLSX', () => {
+    const updates = officeIngestionDocumentUpdates({
+      kind: 'unsupported',
+      checksum: 'synthetic',
+      status: 'stored_only',
+      engine: 'none',
+      pages: [],
+      text: '',
+      warnings: ['The contents do not match the expected Office ZIP format.'],
+      pageMapping: 'none',
+    }, '2026-07-28T12:00:00.000Z');
+
+    expect(updates).toMatchObject({
+      text_read: false,
+      extracted_text_available: false,
+      text_extraction_status: 'failed',
+      processing_status: 'Requires Verification',
+    });
+    expect(updates.text_source).toBeUndefined();
+    expect(updates.text_parser).toBeUndefined();
+    expect(updates.extracted_text_id).toBeUndefined();
+    expect(updates.text_extraction_error).toContain('expected Office ZIP format');
   });
 
   it('identifies unreadable pages and preserves prior text across OCR failure and retry', () => {
