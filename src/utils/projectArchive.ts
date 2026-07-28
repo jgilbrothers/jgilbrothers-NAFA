@@ -99,7 +99,11 @@ export const validateArchiveManifest = (value: unknown): ArchiveManifest => {
     const documentId = record.documentId as string;
     if (documentIds.has(documentId)) invalidManifest(`duplicate documentId ${documentId}`);
     documentIds.add(documentId);
-    if (!path.startsWith(`source-files/${documentId}/`) || path.endsWith('/metadata.json')) invalidManifest(`files[${index}] path is inconsistent with documentId ${documentId}`);
+    const legacyPrefix = `source-files/${documentId}/`;
+    const contentPrefix = `${legacyPrefix}content/`;
+    const legacySourcePath = path.startsWith(legacyPrefix) && path.slice(legacyPrefix.length).length > 0 && !path.slice(legacyPrefix.length).includes('/') && !path.endsWith('/metadata.json');
+    const contentSourcePath = path.startsWith(contentPrefix) && path.slice(contentPrefix.length).length > 0 && !path.slice(contentPrefix.length).includes('/');
+    if (!legacySourcePath && !contentSourcePath) invalidManifest(`files[${index}] path is inconsistent with documentId ${documentId}`);
     return { path, documentId, sha256: validateDigest(record.sha256, `files[${index}]`), size: validateSize(record.size, `files[${index}]`, ARCHIVE_LIMITS.maxSourceFileBytes) };
   });
   const artifacts = rawArtifacts.map((item: unknown, index: number): ArchiveArtifactEntry => {
@@ -138,9 +142,74 @@ const assertSafeJson = (value: unknown, label: string, seen = new Set<object>())
   seen.delete(value as object);
 };
 
-const isValidWorkspaceState = (value: unknown): value is WorkspaceState => {
-  if (!isPlainObject(value)) return false;
-  return ['accounts', 'documents', 'transactions', 'rules', 'reconItems', 'auditLogs', 'chatLog'].every(key => Array.isArray(value[key])) && typeof value.jurisdiction === 'string';
+const requireString = (value: unknown, label: string): void => {
+  if (typeof value !== 'string' || !value) throw new Error(`Archive workspace data is invalid: ${label} must be a non-empty string.`);
+};
+const requireNumber = (value: unknown, label: string): void => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Archive workspace data is invalid: ${label} must be a finite number.`);
+};
+const requireBoolean = (value: unknown, label: string): void => {
+  if (typeof value !== 'boolean') throw new Error(`Archive workspace data is invalid: ${label} must be a boolean.`);
+};
+const requireObject = (value: unknown, label: string): Record<string, any> => {
+  if (!isPlainObject(value)) throw new Error(`Archive workspace data is invalid: ${label} must be an object.`);
+  return value;
+};
+const requireCollection = (root: Record<string, any>, key: string): unknown[] => {
+  if (!Array.isArray(root[key])) throw new Error(`Archive workspace data is invalid: ${key} must be an array.`);
+  return root[key];
+};
+
+const validateTransactionMember = (value: unknown, label: string): void => {
+  const item = requireObject(value, label);
+  for (const key of ['transaction_id', 'transaction_date', 'raw_description', 'clean_vendor_name', 'transaction_type', 'processing_method', 'card_or_account_suffix', 'category']) requireString(item[key], `${label}.${key}`);
+  requireNumber(item.amount, `${label}.amount`);
+  requireBoolean(item.is_pending, `${label}.is_pending`);
+};
+
+const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceState = (value: unknown): asserts value is WorkspaceState => {
+  const root = requireObject(value, 'root');
+  requireString(root.jurisdiction, 'jurisdiction');
+  const documents = requireCollection(root, 'documents');
+  const accounts = requireCollection(root, 'accounts');
+  const transactions = requireCollection(root, 'transactions');
+  const rules = requireCollection(root, 'rules');
+  const reconItems = requireCollection(root, 'reconItems');
+  const auditLogs = requireCollection(root, 'auditLogs');
+  const chatLog = requireCollection(root, 'chatLog');
+
+  documents.forEach((value, index) => {
+    const item = requireObject(value, `documents[${index}]`);
+    for (const key of ['id', 'filename', 'upload_timestamp', 'file_type', 'ocr_status', 'institution_name', 'processing_status']) requireString(item[key], `documents[${index}].${key}`);
+    requireNumber(item.ocr_confidence, `documents[${index}].ocr_confidence`);
+    if (item.sha256 !== undefined && (typeof item.sha256 !== 'string' || !SHA256_PATTERN.test(item.sha256))) throw new Error(`Archive workspace data is invalid: documents[${index}].sha256 must be a 64-character hexadecimal digest.`);
+  });
+  accounts.forEach((value, index) => {
+    const item = requireObject(value, `accounts[${index}]`);
+    for (const key of ['id', 'account_name', 'account_suffix', 'account_type', 'institution_name', 'statement_period', 'account_status']) requireString(item[key], `accounts[${index}].${key}`);
+    requireNumber(item.current_balance, `accounts[${index}].current_balance`);
+    requireNumber(item.available_balance, `accounts[${index}].available_balance`);
+  });
+  transactions.forEach((item, index) => validateTransactionMember(item, `transactions[${index}]`));
+  rules.forEach((value, index) => {
+    const item = requireObject(value, `rules[${index}]`);
+    for (const key of ['id', 'keyword', 'assigned_category', 'created_at']) requireString(item[key], `rules[${index}].${key}`);
+    requireNumber(item.hits_count, `rules[${index}].hits_count`);
+  });
+  reconItems.forEach((value, index) => {
+    const item = requireObject(value, `reconItems[${index}]`);
+    for (const key of ['id', 'type', 'title', 'description', 'severity', 'status']) requireString(item[key], `reconItems[${index}].${key}`);
+    if (item.transactionA !== undefined) validateTransactionMember(item.transactionA, `reconItems[${index}].transactionA`);
+    if (item.transactionB !== undefined) validateTransactionMember(item.transactionB, `reconItems[${index}].transactionB`);
+  });
+  auditLogs.forEach((value, index) => {
+    const item = requireObject(value, `auditLogs[${index}]`);
+    for (const key of ['id', 'timestamp', 'action', 'details', 'level', 'operator']) requireString(item[key], `auditLogs[${index}].${key}`);
+  });
+  chatLog.forEach((value, index) => {
+    const item = requireObject(value, `chatLog[${index}]`);
+    for (const key of ['id', 'sender', 'text', 'timestamp']) requireString(item[key], `chatLog[${index}].${key}`);
+  });
 };
 
 const validateMetadata = (value: unknown, expectedDocumentId: string, expectedSha256: string): Omit<StoredUploadedFile, 'blob'> => {
@@ -195,7 +264,7 @@ const readZipEntryCount = (buffer: ArrayBuffer): number => {
 export async function exportProjectArchive(workspaceId: string, state: WorkspaceState, onProgress?: (completed: number, total: number) => void): Promise<Blob> {
   assertSafeJson(state, 'Workspace');
   const stateCopy = structuredClone(state);
-  if (!isValidWorkspaceState(stateCopy)) throw new Error('Archive workspace data is invalid: required project collections are missing or malformed.');
+  validateWorkspaceState(stateCopy);
   if (stateCopy.documents.length > ARCHIVE_LIMITS.maxDocuments) throw new Error(`Archive contains more than ${ARCHIVE_LIMITS.maxDocuments} documents.`);
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
@@ -214,7 +283,7 @@ export async function exportProjectArchive(workspaceId: string, state: Workspace
     if (file?.blob) {
       if (file.blob.size > ARCHIVE_LIMITS.maxSourceFileBytes) throw new Error(`Source file ${file.originalFileName} exceeds the archive size limit.`);
       const checksum = await sha256(file.blob);
-      const path = `source-files/${file.documentId}/${encodeURIComponent(file.originalFileName)}`;
+      const path = `source-files/${file.documentId}/content/${encodeURIComponent(file.originalFileName)}`;
       validateArchivePath(path, 'source file');
       zip.file(path, await file.blob.arrayBuffer());
       const metadataPath = metadataPathFor(file.documentId);
@@ -273,7 +342,7 @@ export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: Arc
   try { workspace = JSON.parse(new TextDecoder().decode(workspaceBytes)); }
   catch { throw new Error('Archive workspace data is invalid: JSON could not be parsed.'); }
   assertSafeJson(workspace, 'Archive workspace data');
-  if (!isValidWorkspaceState(workspace)) throw new Error('Archive workspace data is invalid: required project collections are missing or malformed.');
+  validateWorkspaceState(workspace);
   if (workspace.documents.length > ARCHIVE_LIMITS.maxDocuments) throw new Error(`Archive workspace exceeds the ${ARCHIVE_LIMITS.maxDocuments}-document limit.`);
   const workspaceIds = new Set<string>();
   for (const [index, document] of workspace.documents.entries()) {
@@ -326,6 +395,7 @@ const prepareProjectArchive = async (blob: Blob, documentIdMap: Record<string, s
     const workspaceDocument = workspace.documents.find(document => document.id === expected.documentId);
     if (workspaceDocument?.mime_type && workspaceDocument.mime_type !== metadata.mimeType) throw new Error(`Archive metadata MIME type disagrees with workspace document ${expected.documentId}.`);
     const sourceBytes = await verifyEntry(zip, expected);
+    if (workspaceDocument?.sha256 && workspaceDocument.sha256.toLowerCase() !== expected.sha256) throw new Error(`Archive workspace source checksum disagrees with verified source bytes for document ${expected.documentId}.`);
     if (metadata.size !== sourceBytes.byteLength) throw new Error(`Archive metadata size disagrees with source bytes for document ${expected.documentId}.`);
     preparedFiles.push({ ...metadata, documentId: targetDocumentId, blob: new Blob([sourceBytes], { type: metadata.mimeType }) });
   }

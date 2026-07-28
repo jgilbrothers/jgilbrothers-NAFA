@@ -1,6 +1,7 @@
 import type { StoredExtractedText } from './extractedTextStorage';
 import { runLocalImageOcr, type LocalOcrProgress } from './localOcr';
 import { configurePdfWorker } from './pdfRuntime';
+import type { PdfTextExtractionResult } from './pdfTextExtractor';
 
 export interface PdfOcrPageResult { page: number; text: string; confidence?: number; engine: 'tesseract-local'; timestamp: string; status: 'succeeded' | 'needs_review' | 'failed'; error?: string; }
 export interface PdfOcrProgress { page: number; totalPages: number; stage: 'rendering' | 'ocr'; ocr?: LocalOcrProgress; }
@@ -66,4 +67,36 @@ export function mergePdfOcrResults(existing: StoredExtractedText | undefined, pa
     return !page || !retriedPages.has(Number(page));
   }), ...results.filter(result => result.status !== 'succeeded').map(result => `OCR page ${result.page}: ${result.error || 'needs user review'}`)];
   return { documentId: existing?.documentId || '', text: pageTexts.map((text, index) => `--- Page ${index + 1} ---\n${text}`).join('\n\n'), pageTexts, pageCount, updatedAt: new Date().toISOString(), pageMappingApproximate: false, parser: results.some(result => result.text.trim()) ? 'ocr' : existing?.parser || 'pdfjs', warnings, pageConfidences, pageEngines };
+}
+
+/** Merge a PDF.js reread without erasing OCR text or provenance for still-unreadable pages. */
+export function mergePdfTextReread(existing: StoredExtractedText | undefined, documentId: string, result: PdfTextExtractionResult, updatedAt = new Date().toISOString()): StoredExtractedText {
+  const pageCount = Math.max(result.pageCount, existing?.pageCount || 0);
+  const pageTexts = Array.from({ length: pageCount }, (_, index) => {
+    const pdfText = result.pageTexts[index]?.trim() || '';
+    return pdfText || existing?.pageTexts[index] || '';
+  });
+  const pageEngines = Array.from({ length: pageCount }, (_, index) => {
+    const pdfText = result.pageTexts[index]?.trim() || '';
+    return pdfText ? 'pdfjs' : existing?.pageEngines?.[index] || existing?.parser || 'pdfjs';
+  });
+  const pageConfidences = Array.from({ length: pageCount }, (_, index) => {
+    const pdfText = result.pageTexts[index]?.trim() || '';
+    return pdfText ? undefined : existing?.pageConfidences?.[index];
+  });
+  const warnings = Array.from(new Set([...(existing?.warnings || []), ...(result.warnings || [])]));
+  const hasOcrPages = pageEngines.some(engine => engine === 'tesseract-local' || engine === 'ocr');
+  return {
+    documentId,
+    text: pageTexts.map((text, index) => `--- Page ${index + 1} ---\n${text}`).join('\n\n'),
+    pageTexts,
+    pageCount,
+    updatedAt,
+    pageMappingApproximate: false,
+    parser: hasOcrPages ? 'ocr' : 'pdfjs',
+    warnings,
+    pageConfidences,
+    pageEngines,
+    structuredData: existing?.structuredData,
+  };
 }

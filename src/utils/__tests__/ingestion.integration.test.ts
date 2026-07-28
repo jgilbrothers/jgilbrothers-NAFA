@@ -4,7 +4,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../documentIngestion';
 import { extractPdfText } from '../pdfTextExtractor';
-import { mergePdfOcrResults, ocrPdfPages, unreadablePdfPages } from '../pdfPageOcr';
+import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../pdfPageOcr';
 import * as localOcr from '../localOcr';
 import { buildSpreadsheetRowCandidates } from '../spreadsheetCandidates';
 import { getUploadedFile, saveUploadedFile } from '../fileStorage';
@@ -138,6 +138,40 @@ describe('real ingestion interfaces', () => {
     const retried = mergePdfOcrResults(failed, 2, [{ page: 2, text: 'recovered text', confidence: .91, engine: 'tesseract-local', timestamp: 'later', status: 'succeeded' }]);
     expect(retried.pageTexts).toEqual(['valid old text', 'recovered text']);
     expect(retried.warnings).toContain('OCR page 1: synthetic failure');
+  });
+
+  it('preserves OCR pages and provenance across repeated mixed-PDF rereads', () => {
+    const existing = {
+      documentId: 'DOC-MIXED',
+      text: 'old',
+      pageTexts: ['old selectable text', 'scanned page OCR'],
+      pageCount: 2,
+      updatedAt: 'before',
+      parser: 'ocr' as const,
+      warnings: ['OCR page 2 reviewed'],
+      pageConfidences: [undefined, .93],
+      pageEngines: ['pdfjs', 'tesseract-local'],
+    };
+    const reread = {
+      text: 'updated',
+      pageCount: 2,
+      pageTexts: ['updated selectable text', ''],
+      status: 'needs_review' as const,
+      confidence: .75,
+      readStatus: 'partial_text' as const,
+      parser: 'pdfjs' as const,
+      warnings: ['1 page(s) contained no selectable text and may require OCR.'],
+      pageMappingApproximate: false as const,
+    };
+    const once = mergePdfTextReread(existing, 'DOC-MIXED', reread, '2026-07-28T12:00:00.000Z');
+    const twice = mergePdfTextReread(once, 'DOC-MIXED', reread, '2026-07-28T12:00:00.000Z');
+
+    expect(once.pageTexts).toEqual(['updated selectable text', 'scanned page OCR']);
+    expect(once.pageEngines).toEqual(['pdfjs', 'tesseract-local']);
+    expect(once.pageConfidences).toEqual([undefined, .93]);
+    expect(once.parser).toBe('ocr');
+    expect(once.warnings).toEqual(['OCR page 2 reviewed', '1 page(s) contained no selectable text and may require OCR.']);
+    expect(twice).toEqual(once);
   });
 
   it('runs selected PDF pages through the renderer and local OCR with exact page identity', async () => {

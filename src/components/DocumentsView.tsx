@@ -25,7 +25,7 @@ import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, L
 import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
 import { getActiveWorkspaceId } from '../utils/persistence';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
-import { mergePdfOcrResults, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
+import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
 import { buildSpreadsheetRowCandidates, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
 import { extractLegalCandidates, type LegalCandidate } from '../utils/legalDocumentExtractor';
 
@@ -1062,27 +1062,30 @@ export default function DocumentsView({
       }
       const result = await extractPdfText(stored.blob);
       const now = new Date().toISOString();
-      if (result.text) {
-        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true, parser: result.parser, warnings: result.warnings });
-        setExtractedText(result.text);
+      const existingText = await getExtractedText(doc.id).catch(() => undefined);
+      const mergedText = mergePdfTextReread(existingText, doc.id, result, now);
+      if (mergedText.pageTexts.some(text => text.trim())) {
+        await saveExtractedText(mergedText);
+        setExtractedText(mergedText.text);
       }
       const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
-      const hasNewText = Boolean(result.text.trim());
+      const hasNewText = mergedText.pageTexts.some(text => text.trim());
+      const hasPreservedOcr = mergedText.pageEngines?.some(engine => engine === 'tesseract-local' || engine === 'ocr') || false;
       const ocrStatus = getNormalizedOcrStatus(doc);
       const updates: Partial<DocumentRecord> = hasNewText ? {
         text_read: true,
         text_read_at: now,
         extracted_text_available: true,
         extracted_text_id: doc.id,
-        extracted_text_preview: result.text.slice(0, 500),
-        page_count: result.pageCount || doc.page_count,
+        extracted_text_preview: mergedText.text.slice(0, 500),
+        page_count: mergedText.pageCount || doc.page_count,
         text_extraction_status: result.status,
         text_extraction_error: result.error || result.warning,
-        text_parser: result.parser,
-        page_mapping_approximate: result.pageMappingApproximate ?? true,
+        text_parser: mergedText.parser,
+        page_mapping_approximate: mergedText.pageMappingApproximate ?? true,
         ocr_status: result.status === 'succeeded' ? (ocrStatus === 'failed' ? 'not_started' : doc.ocr_status) : 'needs_review',
-        ocr_confidence: result.confidence,
-        text_source: 'pdf',
+        ocr_confidence: hasPreservedOcr ? doc.ocr_confidence : result.confidence,
+        text_source: hasPreservedOcr ? 'ocr' : 'pdf',
         processing_status: 'Requires Verification',
       } : {
         ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false, extracted_text_id: undefined, extracted_text_preview: undefined, text_source: undefined, text_parser: result.parser, page_mapping_approximate: result.pageMappingApproximate ?? true }),

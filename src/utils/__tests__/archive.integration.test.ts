@@ -9,6 +9,19 @@ import type { WorkspaceState } from '../persistence';
 
 Object.assign(globalThis, { window: globalThis });
 const workspace = (id: string): WorkspaceState => ({ accounts: [], rules: [], transactions: [], reconItems: [], auditLogs: [], chatLog: [], jurisdiction: 'North Carolina', documents: [{ id: `DOC-${id}`, filename: 'synthetic.txt', upload_timestamp: '2026-01-01T00:00:00.000Z', file_type: 'Other', ocr_status: 'not_started', ocr_confidence: 0, institution_name: 'Synthetic', processing_status: 'Requires Verification', source_file_status: 'stored', local_file: { storage: 'indexeddb', stored: true } }], profile: { userDisplayName: 'Synthetic User', workspaceName: id, jurisdiction: 'North Carolina', createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z', appVersion: 'test' } });
+const validationMemoryStorage = () => {
+  const files = new Map<string, any>();
+  const texts = new Map<string, any>();
+  const storage: ArchiveRestoreStorage = {
+    getFile: async id => files.get(id),
+    getText: async id => texts.get(id),
+    putFile: async record => { files.set(record.documentId, record); },
+    putText: async record => { texts.set(record.documentId, record); },
+    deleteFile: async id => { files.delete(id); },
+    deleteText: async id => { texts.delete(id); },
+  };
+  return { files, texts, storage };
+};
 
 describe('complete project archive lifecycle', () => {
   beforeEach(async () => { await clearStoredFiles(); await deleteExtractedText('DOC-ROUNDTRIP'); });
@@ -25,6 +38,21 @@ describe('complete project archive lifecycle', () => {
     expect(restored.profile?.workspaceName).toBe('ROUNDTRIP');
     expect((await getUploadedFile('DOC-ROUNDTRIP'))?.blob).toBeTruthy();
     expect((await getExtractedText('DOC-ROUNDTRIP'))?.structuredData).toEqual({ Sheet1: [['Header'], ['Value']] });
+  });
+
+  it('round-trips reserved and encoded source filenames without artifact collisions', async () => {
+    const names = ['metadata.json', 'workspace.json', 'manifest.json', 'encoded name #%.json'];
+    const state = workspace('RESERVED');
+    state.documents = names.map((filename, index) => ({ ...state.documents[0], id: `DOC-RESERVED-${index + 1}`, filename }));
+    for (const document of state.documents) await saveUploadedFile(document.id, new File([`source ${document.id}`], document.filename, { type: 'application/json' }));
+
+    const archive = await exportProjectArchive('RESERVED', state);
+    const inspected = await inspectProjectArchive(archive);
+    expect(inspected.manifest.files.every(file => file.path.includes('/content/'))).toBe(true);
+    expect(new Set([...inspected.manifest.files.map(file => file.path), ...inspected.manifest.artifacts.map(artifact => artifact.path)]).size).toBe(inspected.manifest.files.length + inspected.manifest.artifacts.length);
+    await clearStoredFiles();
+    await restoreProjectArchive(archive);
+    for (const document of state.documents) expect((await getUploadedFile(document.id))?.originalFileName).toBe(document.filename);
   });
 
   it('rejects a checksum-corrupted archive', async () => {
@@ -79,6 +107,31 @@ describe('complete project archive lifecycle', () => {
     zip.file('workspace.json', workspaceJson);
     zip.file('manifest.json', JSON.stringify({ schemaVersion: ARCHIVE_SCHEMA_VERSION, createdAt: '2026-01-01T00:00:00.000Z', workspaceId: 'BAD', files: [], artifacts: [{ path: 'workspace.json', sha256: await sha256(new Blob([workspaceJson])), size: new Blob([workspaceJson]).size }] }));
     await expect(inspectProjectArchive(await zip.generateAsync({ type: 'blob' }))).rejects.toThrow(/workspace data is invalid/);
+  });
+
+  it.each([
+    ['document filename', (state: any) => { delete state.documents[0].filename; }],
+    ['document file_type', (state: any) => { delete state.documents[0].file_type; }],
+    ['document institution_name', (state: any) => { delete state.documents[0].institution_name; }],
+    ['account member', (state: any) => { state.accounts = [{ id: 'ACC-BAD' }]; }],
+    ['transaction member', (state: any) => { state.transactions = [{ transaction_id: 'TX-BAD' }]; }],
+    ['rule member', (state: any) => { state.rules = [{ id: 'RULE-BAD' }]; }],
+    ['reconciliation member', (state: any) => { state.reconItems = [{ id: 'REC-BAD' }]; }],
+    ['audit member', (state: any) => { state.auditLogs = [{ id: 'LOG-BAD' }]; }],
+    ['chat member', (state: any) => { state.chatLog = [{ id: 'CHAT-BAD' }]; }],
+  ])('rejects malformed %s before persistence', async (_label, mutate) => {
+    const state = workspace('MEMBER');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    const archive = await exportProjectArchive('MEMBER', state);
+    const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+      const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+      mutate(parsed);
+      await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+    });
+    const memory = validationMemoryStorage();
+    await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(/Archive workspace data is invalid/);
+    expect(memory.files.size).toBe(0);
+    expect(memory.texts.size).toBe(0);
   });
 
   it('stops when a document claims retained source bytes that are missing', async () => {
@@ -271,6 +324,34 @@ describe('metadata integrity and validation', () => {
     const archive = await metadataArchive();
     await restoreProjectArchive(archive, { 'DOC-META': 'DOC-META-VALID' });
     expect(await getUploadedFile('DOC-META-VALID')).toMatchObject({ documentId: 'DOC-META-VALID', originalFileName: 'synthetic-evidence.txt', mimeType: 'text/plain', size: 25 });
+  });
+
+  it('accepts matching or absent workspace digests and rejects contradictions before writes', async () => {
+    const source = new File(['synthetic digest source'], 'digest.txt', { type: 'text/plain' });
+    const actualDigest = await sha256(source);
+
+    const matching = workspace('DIGEST-MATCH');
+    matching.documents[0].sha256 = actualDigest;
+    matching.documents[0].checksum_status = 'verified';
+    await saveUploadedFile('DOC-DIGEST-MATCH', source);
+    const matchingMemory = validationMemoryStorage();
+    await restoreProjectArchive(await exportProjectArchive('DIGEST-MATCH', matching), {}, matchingMemory.storage);
+    expect(matchingMemory.files.size).toBe(1);
+
+    const absent = workspace('DIGEST-ABSENT');
+    await saveUploadedFile('DOC-DIGEST-ABSENT', source);
+    const absentMemory = validationMemoryStorage();
+    await restoreProjectArchive(await exportProjectArchive('DIGEST-ABSENT', absent), {}, absentMemory.storage);
+    expect(absentMemory.files.size).toBe(1);
+
+    const contradictory = workspace('DIGEST-MISMATCH');
+    contradictory.documents[0].sha256 = 'f'.repeat(64);
+    contradictory.documents[0].checksum_status = 'verified';
+    await saveUploadedFile('DOC-DIGEST-MISMATCH', source);
+    const mismatchMemory = validationMemoryStorage();
+    await expect(restoreProjectArchive(await exportProjectArchive('DIGEST-MISMATCH', contradictory), {}, mismatchMemory.storage)).rejects.toThrow(/workspace source checksum disagrees/);
+    expect(mismatchMemory.files.size).toBe(0);
+    expect(mismatchMemory.texts.size).toBe(0);
   });
 
   it('rejects an unreasonable compression ratio before parsing metadata', async () => {
