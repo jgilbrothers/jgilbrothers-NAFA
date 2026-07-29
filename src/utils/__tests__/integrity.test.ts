@@ -6,6 +6,7 @@ import { extractLegalCandidates } from '../legalDocumentExtractor';
 import { isVerifiedTransaction, migrateLegacyTransactions, verifiedTransactionsOnly } from '../verifiedTransactions';
 import type { Transaction } from '../../types';
 import { calculateAggregates } from '../dataEngine';
+import { createLocalFinancialSummary } from '../aiAnalysisEngine';
 import { MOCK_TRANSACTIONS } from '../../data/mockData';
 import { finalizeReviewedTransaction } from '../transactionReview';
 
@@ -109,6 +110,24 @@ describe('traceability and confirmation gating', () => {
     const migrated = migrateLegacyTransactions([transaction({ amount: 42, category: 'Groceries' })]);
     expect(calculateAggregates([], verifiedTransactionsOnly(migrated)).categorySpending).toEqual([{ name: 'Groceries', value: 42 }]);
     expect(verifiedTransactionsOnly(migrateLegacyTransactions(MOCK_TRANSACTIONS)).length).toBe(MOCK_TRANSACTIONS.length);
+  });
+
+  it('uses one strict verified credit/debit interpretation for shared financial inputs', () => {
+    const records = [
+      transaction({ transaction_id: 'income', amount: 100, transaction_type: 'credit', verification_status: 'confirmed', category: 'Income/Deposits' }),
+      transaction({ transaction_id: 'expense', amount: 30, transaction_type: 'debit', verification_status: 'confirmed', category: 'Groceries' }),
+      transaction({ transaction_id: 'corrected-split', amount: 20, transaction_type: 'debit', verification_status: 'corrected', category: 'Miscellaneous', splits: [{ category: 'Utilities', amount: 20, percentage: 100 }] }),
+      transaction({ transaction_id: 'review', amount: 900, transaction_type: 'debit', verification_status: 'needs_review' }),
+      transaction({ transaction_id: 'excluded', amount: 800, transaction_type: 'credit', verification_status: 'excluded' }),
+      transaction({ transaction_id: 'disputed', amount: 700, transaction_type: 'debit', verification_status: 'disputed' }),
+    ];
+    const financialInputs = verifiedTransactionsOnly(records);
+    expect(financialInputs.map(item => item.transaction_id)).toEqual(['income', 'expense', 'corrected-split']);
+    expect(calculateAggregates([], financialInputs).categorySpending).toEqual([
+      { name: 'Groceries', value: 30 },
+      { name: 'Utilities', value: 20 },
+    ]);
+    expect(createLocalFinancialSummary(financialInputs, 'income and expense').calculatedTotal).toBe(50);
   });
 });
 

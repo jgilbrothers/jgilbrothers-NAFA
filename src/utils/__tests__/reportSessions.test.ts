@@ -134,8 +134,9 @@ describe('workspace report-session compatibility', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('ignored'));
   });
 
-  it('deduplicates IDs deterministically using the first complete session', () => {
-    expect(writeReportSessions('WS-1', [session('A'), { ...session('A'), name: 'Later duplicate' }], storage)).toEqual([session('A')]);
+  it('rejects duplicate IDs on strict writes instead of silently discarding a session', () => {
+    expect(() => writeReportSessions('WS-1', [session('A'), { ...session('A'), name: 'Later duplicate' }], storage)).toThrow(/duplicate id A/);
+    expect(storage.getItem(reportSessionsKey('WS-1'))).toBeNull();
   });
 
   it('handles empty legacy storage normally', () => {
@@ -143,7 +144,7 @@ describe('workspace report-session compatibility', () => {
   });
 
   it('restores imported sessions to the workspace-scoped key and reloads them', () => {
-    writeReportSessions('WS-IMPORTED', [session('RESTORED'), session('RESTORED')], storage);
+    writeReportSessions('WS-IMPORTED', [session('RESTORED')], storage);
     expect(resolveReportSessions('WS-IMPORTED', storage)).toEqual([session('RESTORED')]);
   });
 });

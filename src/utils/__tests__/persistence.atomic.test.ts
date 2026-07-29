@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { commitImportedWorkspace, loadWorkspace, type WorkspaceState } from '../persistence';
+import { commitImportedWorkspace, getWorkspaceStateById, loadWorkspace, parseLocalWorkspaceProfile, type WorkspaceState } from '../persistence';
 import type { Transaction } from '../../types';
 
 const originalLocalStorage = globalThis.localStorage;
@@ -49,5 +49,26 @@ describe('imported workspace persistence', () => {
     const persisted = JSON.parse(values.get('nafa_ledger_workspace_v3_WS-LEGACY')!);
     expect(persisted.transactions[0]).toEqual({ ...legacy, verification_status: 'confirmed' });
     expect(loadWorkspace()!.transactions).toEqual(first.transactions);
+  });
+
+  it('uses the canonical profile parser and never returns render-unsafe local profile values', () => {
+    const complete = {
+      userDisplayName: 'Synthetic User', workspaceName: 'Synthetic Workspace', caseProjectName: '', projectNote: '',
+      county: '', jurisdiction: 'North Carolina', createdAt: '2026-01-01T00:00:00.000Z',
+      lastOpenedAt: '2026-01-02T00:00:00.000Z', appVersion: 'test',
+    };
+    expect(parseLocalWorkspaceProfile(complete)).toEqual(complete);
+    expect(parseLocalWorkspaceProfile({ ...complete, workspaceName: { unsafe: true } })).toBeUndefined();
+    expect(parseLocalWorkspaceProfile({ ...complete, lastOpenedAt: 'not-a-date' })).toBeUndefined();
+    expect(parseLocalWorkspaceProfile({ ...complete, unsupported: 'value' })).toBeUndefined();
+
+    const values = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return values.size; }, clear: () => values.clear(), getItem: key => values.get(key) ?? null,
+      key: index => [...values.keys()][index] ?? null, removeItem: key => { values.delete(key); }, setItem: (key, value) => { values.set(key, value); },
+    };
+    values.set('nafa_ledger_workspace_v3_WS-PROFILE', JSON.stringify({ ...emptyWorkspace(), profile: { ...complete, workspaceName: ['unsafe'] } }));
+    Object.assign(globalThis, { localStorage: storage });
+    expect(getWorkspaceStateById('WS-PROFILE')?.profile).toMatchObject({ workspaceName: 'New Project', jurisdiction: 'North Carolina' });
   });
 });

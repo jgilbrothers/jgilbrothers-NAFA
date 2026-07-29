@@ -70,12 +70,15 @@ export function parseSavedReportSession(value: unknown): SavedReportSession | un
 
 export function validateSavedReportSessions(value: unknown, label = 'Report sessions'): SavedReportSession[] {
   if (!Array.isArray(value)) throw new Error(`${label} must be an array.`);
+  const ids = new Set<string>();
   const sessions = value.map((item, index) => {
     const parsed = parseSavedReportSession(item);
     if (!parsed) throw new Error(`${label}[${index}] is incomplete or malformed.`);
+    if (ids.has(parsed.id)) throw new Error(`${label} contains duplicate id ${parsed.id}.`);
+    ids.add(parsed.id);
     return parsed;
   });
-  return deduplicate(sessions);
+  return sessions;
 }
 
 const parseSessions = (raw: string | null, label: string, warn: (message: string) => void): SavedReportSession[] => {

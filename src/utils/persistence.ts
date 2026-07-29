@@ -36,6 +36,23 @@ export interface LocalWorkspaceProfile {
   appVersion: string;
 }
 
+const PROFILE_KEYS = new Set(['userDisplayName', 'workspaceName', 'caseProjectName', 'projectNote', 'county', 'jurisdiction', 'createdAt', 'lastOpenedAt', 'appVersion']);
+const isValidTimestamp = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && !Number.isNaN(Date.parse(value));
+
+export function parseLocalWorkspaceProfile(value: unknown): LocalWorkspaceProfile | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const profile = value as Record<string, unknown>;
+  if (Object.keys(profile).some(key => !PROFILE_KEYS.has(key) || key === '__proto__' || key === 'constructor' || key === 'prototype')) return undefined;
+  for (const key of ['userDisplayName', 'workspaceName', 'jurisdiction', 'appVersion'] as const) {
+    if (typeof profile[key] !== 'string' || profile[key].length === 0) return undefined;
+  }
+  for (const key of ['caseProjectName', 'projectNote', 'county'] as const) {
+    if (profile[key] !== undefined && typeof profile[key] !== 'string') return undefined;
+  }
+  if (!isValidTimestamp(profile.createdAt) || !isValidTimestamp(profile.lastOpenedAt)) return undefined;
+  return profile as unknown as LocalWorkspaceProfile;
+}
+
 export interface WorkspaceState {
   accounts: AccountSummary[];
   documents: DocumentRecord[];
@@ -124,7 +141,8 @@ export function getWorkspaceStateById(id: string): WorkspaceState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!validateWorkspaceBackup(parsed)) return null;
-    const migrated = { ...parsed, transactions: migrateLegacyTransactions(parsed.transactions) } as WorkspaceState;
+    const safeProfile = parseLocalWorkspaceProfile(parsed.profile) || getDefaultWorkspaceState().profile!;
+    const migrated = { ...parsed, profile: safeProfile, transactions: migrateLegacyTransactions(parsed.transactions) } as WorkspaceState;
     if (migrated.transactions.some((transaction, index) => transaction !== parsed.transactions[index])) {
       localStorage.setItem(getWorkspaceKey(id), JSON.stringify(migrated));
     }
@@ -136,7 +154,8 @@ export function saveWorkspace(state: WorkspaceState): void {
   try {
     const activeId = getActiveWorkspaceId();
     const now = new Date().toISOString();
-    const normalized: WorkspaceState = { ...state, profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Local Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
+    const safeProfile = parseLocalWorkspaceProfile(state.profile) || getDefaultWorkspaceState().profile!;
+    const normalized: WorkspaceState = { ...state, profile: { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Local Project', jurisdiction: safeProfile.jurisdiction || state.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now } };
     const rawData = JSON.stringify(normalized);
     localStorage.setItem(getWorkspaceKey(activeId), rawData);
     localStorage.setItem(STORAGE_KEY, rawData);
@@ -149,7 +168,8 @@ export function commitImportedWorkspace(id: string, state: WorkspaceState): void
   const previous = new Map(keys.map(key => [key, localStorage.getItem(key)]));
   try {
     const now = new Date().toISOString();
-    const normalized: WorkspaceState = { ...state, transactions: migrateLegacyTransactions(state.transactions || []), profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Imported Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
+    const safeProfile = parseLocalWorkspaceProfile(state.profile) || getDefaultWorkspaceState('Imported Project').profile!;
+    const normalized: WorkspaceState = { ...state, transactions: migrateLegacyTransactions(state.transactions || []), profile: { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Imported Project', jurisdiction: safeProfile.jurisdiction || state.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now } };
     const rawData = JSON.stringify(normalized);
     const currentSummaries = getWorkspaceSummaries().filter(summary => summary.id !== id);
     localStorage.setItem(getWorkspaceKey(id), rawData);
@@ -179,7 +199,8 @@ export function loadWorkspace(): WorkspaceState | null {
     const parsed = JSON.parse(rawData);
     if (validateWorkspaceBackup(parsed)) {
       const now = new Date().toISOString();
-      parsed.profile = { ...(parsed.profile || getDefaultWorkspaceState().profile), workspaceName: parsed.profile?.workspaceName || 'Local Project', jurisdiction: parsed.profile?.jurisdiction || parsed.jurisdiction || 'North Carolina', county: parsed.profile?.county || 'Durham County', lastOpenedAt: now };
+      const safeProfile = parseLocalWorkspaceProfile(parsed.profile) || getDefaultWorkspaceState().profile!;
+      parsed.profile = { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Local Project', jurisdiction: safeProfile.jurisdiction || parsed.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now };
       const originalTransactions = parsed.transactions;
       parsed.transactions = migrateLegacyTransactions(originalTransactions);
       if (parsed.transactions.some((transaction: Transaction, index: number) => transaction !== originalTransactions[index])) {

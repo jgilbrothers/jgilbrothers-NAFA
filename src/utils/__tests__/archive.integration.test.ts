@@ -191,9 +191,43 @@ describe('complete project archive lifecycle', () => {
   it('remaps document IDs inside plain-object candidate collections', async () => {
     const state = workspace('ROUNDTRIP');
     await saveUploadedFile('DOC-ROUNDTRIP', new File(['source'], 'synthetic.txt'));
-    await saveExtractedText({ documentId: 'DOC-ROUNDTRIP', text: 'candidate', pageTexts: ['candidate'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z', structuredData: { candidates: [{ documentId: 'DOC-ROUNDTRIP', row: 2 }], legalCandidates: [{ documentId: 'DOC-ROUNDTRIP', kind: 'allegation' }] } });
+    await saveExtractedText({ documentId: 'DOC-ROUNDTRIP', text: 'candidate', pageTexts: ['candidate'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z', structuredData: { candidates: [{ id: 'TX-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', row: 2 }], legalCandidates: [{ id: 'LEGAL-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', kind: 'allegation' }] } });
     await restoreProjectArchive(await exportProjectArchive('ROUNDTRIP', state), { 'DOC-ROUNDTRIP': 'DOC-OBJECT-COPY' });
     expect((await getExtractedText('DOC-OBJECT-COPY'))?.structuredData).toMatchObject({ candidates: [{ documentId: 'DOC-OBJECT-COPY' }], legalCandidates: [{ documentId: 'DOC-OBJECT-COPY' }] });
+  });
+
+  it('self-verifies repetitive exports while preserving ordinary compression and binary bytes', async () => {
+    const state = workspace('COMPRESSION-COMPAT');
+    state.documents[0] = { ...state.documents[0], filename: 'binary.bin', extracted_text_available: true, extracted_text_id: state.documents[0].id };
+    const binary = new Uint8Array(4_096);
+    for (let index = 0; index < binary.length; index += 1) binary[index] = (index * 131 + 17) % 256;
+    const repetitive = 'SYNTHETIC OCR ROW\n'.repeat(20_000);
+    const storage: ArchiveExportStorage = {
+      getFile: async documentId => ({ documentId, originalFileName: 'binary.bin', mimeType: 'application/octet-stream', size: binary.byteLength, uploadedAt: '2026-01-01T00:00:00.000Z', blob: new Blob([binary]) }),
+      getText: async documentId => ({ documentId, text: repetitive, pageTexts: [repetitive], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' }),
+    };
+
+    const archive = await exportProjectArchive('COMPRESSION-COMPAT', state, undefined, storage);
+    await expect(inspectProjectArchive(archive)).resolves.toMatchObject({ workspace: { documents: [{ id: 'DOC-COMPRESSION-COMPAT' }] } });
+    const zip = await JSZip.loadAsync(await archive.arrayBuffer());
+    const extractedEntry = zip.file('extracted-text/DOC-COMPRESSION-COMPAT.json') as any;
+    const workspaceEntry = zip.file('workspace.json') as any;
+    expect(extractedEntry._data.compression.magic).toBe('\x00\x00');
+    expect(workspaceEntry._data.compression.magic).toBe('\x08\x00');
+    expect(new Uint8Array(await zip.file('source-files/DOC-COMPRESSION-COMPAT/content/binary.bin')!.async('uint8array'))).toEqual(binary);
+    const memory = validationMemoryStorage();
+    await restoreProjectArchive(archive, {}, memory.storage);
+    expect(new Uint8Array(await memory.files.get('DOC-COMPRESSION-COMPAT').blob.arrayBuffer())).toEqual(binary);
+    expect(memory.texts.get('DOC-COMPRESSION-COMPAT').text).toBe(repetitive);
+  });
+
+  it('fails export when final archive self-verification cannot succeed', async () => {
+    const state = workspace('SELF-VERIFY-FAIL');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    await expect(exportProjectArchive('SELF-VERIFY-FAIL', state, undefined, {
+      getFile: async () => undefined,
+      getText: async () => undefined,
+    }, async () => { throw new Error('synthetic final verification failure'); })).rejects.toThrow(/self-verification failed.*synthetic final verification failure/i);
   });
 
   it.each([null, 'workspace', 42, [], {}, { documents: [], transactions: [] }, { ...workspace('BAD'), documents: {} }])('rejects malformed workspace JSON: %j', async malformed => {
@@ -252,6 +286,146 @@ describe('complete project archive lifecycle', () => {
     await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(/reportMetadata\[0\] is incomplete or malformed/);
     expect(memory.files.size).toBe(0);
     expect(memory.texts.size).toBe(0);
+  });
+
+  it.each(['', 'withdrawal', 'Credit', 'DEBIT'])('rejects unsupported transaction_type %j before persistence', async transactionType => {
+    const state = workspace('TX-TYPE');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.transactions = [{
+      transaction_id: 'TX-TYPE-1', transaction_date: '2026-01-01', raw_description: 'Synthetic',
+      clean_vendor_name: 'Synthetic', amount: 10, transaction_type: 'debit', processing_method: 'Other',
+      card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false,
+    }];
+    const archive = await exportProjectArchive('TX-TYPE', state);
+    const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+      const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+      parsed.transactions[0].transaction_type = transactionType;
+      await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+    });
+    const memory = validationMemoryStorage();
+    await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(/transaction_type has an unsupported value/);
+    expect(memory.files.size).toBe(0);
+    expect(memory.texts.size).toBe(0);
+  });
+
+  it.each(['credit', 'debit'] as const)('round-trips supported transaction_type %s', async transactionType => {
+    const state = workspace(`TX-${transactionType}`);
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.transactions = [{
+      transaction_id: `TX-${transactionType}`, transaction_date: '2026-01-01', raw_description: 'Synthetic',
+      clean_vendor_name: 'Synthetic', amount: 10, transaction_type: transactionType, processing_method: 'Other',
+      card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false,
+    }];
+    expect((await restoreProjectArchive(await exportProjectArchive(`TX-${transactionType}`, state))).transactions[0].transaction_type).toBe(transactionType);
+  });
+
+  it('rejects malformed profiles before persistence and accepts the complete optional shape', async () => {
+    const state = workspace('PROFILE');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.profile = { ...state.profile!, caseProjectName: '', projectNote: 'Synthetic note', county: '', lastOpenedAt: '2026-02-01T00:00:00.000Z' };
+    const archive = await exportProjectArchive('PROFILE', state);
+    await expect(inspectProjectArchive(archive)).resolves.toMatchObject({ workspace: { profile: state.profile } });
+
+    for (const malformedProfile of [
+      { ...state.profile, workspaceName: [] },
+      { ...state.profile, createdAt: 'not-a-date' },
+      { ...state.profile, unsupported: 'value' },
+      [],
+    ]) {
+      const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+        const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+        parsed.profile = malformedProfile;
+        await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+      });
+      const memory = validationMemoryStorage();
+      await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(/profile is incomplete or malformed/);
+      expect(memory.files.size).toBe(0);
+      expect(memory.texts.size).toBe(0);
+    }
+  });
+
+  it.each([
+    ['documents', 'id'],
+    ['accounts', 'id'],
+    ['transactions', 'transaction_id'],
+    ['rules', 'id'],
+    ['reconItems', 'id'],
+    ['auditLogs', 'id'],
+    ['chatLog', 'id'],
+  ])('rejects duplicate %s identifiers before persistence', async (collection, idKey) => {
+    const state = workspace('DUPLICATE-ID');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.accounts = [{ id: 'ACC-1', account_name: 'Synthetic', account_suffix: '0000', account_type: 'checking', institution_name: '', current_balance: 0, available_balance: 0, statement_period: 'Current', account_status: 'Active' }];
+    state.transactions = [{ transaction_id: 'TX-1', transaction_date: '2026-01-01', raw_description: 'Synthetic', clean_vendor_name: 'Synthetic', amount: 10, transaction_type: 'debit', processing_method: 'Other', card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false }];
+    state.rules = [{ id: 'RULE-1', keyword: 'Synthetic', assigned_category: 'Miscellaneous', created_at: '2026-01-01', hits_count: 0 }];
+    state.reconItems = [{ id: 'RECON-1', type: 'Low_Confidence', title: 'Synthetic', description: 'Synthetic', severity: 'low', status: 'Unresolved' }];
+    state.auditLogs = [{ id: 'AUDIT-1', timestamp: '2026-01-01T00:00:00.000Z', action: 'Synthetic', details: 'Synthetic', level: 'info', operator: 'Synthetic' }];
+    state.chatLog = [{ id: 'CHAT-1', sender: 'user', text: 'Synthetic', timestamp: '2026-01-01T00:00:00.000Z' }];
+    const archive = await exportProjectArchive('DUPLICATE-ID', state);
+    const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+      const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+      parsed[collection].push(structuredClone(parsed[collection][0]));
+      await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+    });
+    const memory = validationMemoryStorage();
+    await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(new RegExp(`${collection} contains duplicate ${idKey}`));
+    expect(memory.files.size).toBe(0);
+    expect(memory.texts.size).toBe(0);
+  });
+
+  it('rejects duplicate report and extracted candidate IDs instead of silently discarding evidence', async () => {
+    const state = workspace('DUPLICATE-NESTED');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false }, extracted_text_available: true, extracted_text_id: state.documents[0].id };
+    const report = {
+      id: 'REPORT-1', name: 'Synthetic', timestamp: '2026-01-01T00:00:00.000Z', caseTitle: '', caseNumber: '', clientName: '',
+      jurisdiction: 'North Carolina', reportType: 'itemized_ledger' as const, selectedAccounts: [], selectedCategories: [],
+      startDate: '', endDate: '', excludeDuplicates: true, excludeTransfers: true, excludeUnresolved: false,
+      includeCharts: true, includeNarratives: true, appendixMode: 'condensed' as const,
+    };
+    await expect(exportProjectArchive('DUPLICATE-REPORT', { ...state, reportMetadata: [report, report] }, undefined, {
+      getFile: async () => undefined,
+      getText: async () => undefined,
+    })).rejects.toThrow(/duplicate id REPORT-1/);
+
+    const storage: ArchiveExportStorage = {
+      getFile: async () => undefined,
+      getText: async documentId => ({
+        documentId, text: 'synthetic', pageTexts: ['synthetic'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z',
+        structuredData: { candidates: [{ id: 'CANDIDATE-1', documentId }, { id: 'CANDIDATE-1', documentId }] },
+      }),
+    };
+    await expect(exportProjectArchive('DUPLICATE-CANDIDATE', state, undefined, storage)).rejects.toThrow(/candidates contains duplicate id CANDIDATE-1/);
+  });
+
+  it('rejects dangling operational references while preserving valid historical display identifiers', async () => {
+    const state = workspace('REFERENCES');
+    state.accounts = [{ id: 'ACC-1', account_name: 'Synthetic', account_suffix: '0000', account_type: 'checking', institution_name: '', current_balance: 0, available_balance: 0, statement_period: 'Current', account_status: 'Active' }];
+    state.documents[0] = { ...state.documents[0], account_id: 'ACC-1', source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.transactions = [{ transaction_id: 'TX-1', transaction_date: '2026-01-01', raw_description: 'Synthetic', clean_vendor_name: 'Synthetic', amount: 10, transaction_type: 'debit', processing_method: 'Other', card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false, source_document_id: state.documents[0].id }];
+    state.reconItems = [{ id: 'RECON-1', type: 'Low_Confidence', title: 'Synthetic', description: 'Synthetic', severity: 'low', status: 'Unresolved', documentId: state.documents[0].id, transactionA: state.transactions[0] }];
+    state.auditLogs = [{ id: 'AUDIT-1', timestamp: '2026-01-01T00:00:00.000Z', action: 'Synthetic', details: 'Synthetic', level: 'info', operator: 'Synthetic', account_id: 'ACC-1' }];
+    state.reportMetadata = [{
+      id: 'REPORT-1', name: 'Synthetic', timestamp: '2026-01-01T00:00:00.000Z', caseTitle: '', caseNumber: '', clientName: '',
+      jurisdiction: 'North Carolina', reportType: 'itemized_ledger', selectedAccounts: ['historical-account-suffix'],
+      selectedCategories: ['Historical Category'], startDate: '', endDate: '', excludeDuplicates: true, excludeTransfers: true,
+      excludeUnresolved: false, includeCharts: true, includeNarratives: true, appendixMode: 'condensed',
+    }];
+    await expect(inspectProjectArchive(await exportProjectArchive('REFERENCES', state))).resolves.toMatchObject({ workspace: { transactions: [{ source_document_id: 'DOC-REFERENCES' }] } });
+
+    const archive = await exportProjectArchive('REFERENCES', state);
+    for (const [label, mutate] of [
+      ['document account', (parsed: any) => { parsed.documents[0].account_id = 'ACC-MISSING'; }],
+      ['transaction document', (parsed: any) => { parsed.transactions[0].source_document_id = 'DOC-MISSING'; }],
+      ['reconciliation transaction', (parsed: any) => { parsed.reconItems[0].transactionA.transaction_id = 'TX-MISSING'; }],
+      ['audit account', (parsed: any) => { parsed.auditLogs[0].account_id = 'ACC-MISSING'; }],
+    ] as const) {
+      const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+        const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+        mutate(parsed);
+        await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+      });
+      await expect(inspectProjectArchive(malformed), label).rejects.toThrow(/references a missing/);
+    }
   });
 
   it('stops when a document claims retained source bytes that are missing', async () => {

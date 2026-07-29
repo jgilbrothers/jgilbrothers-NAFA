@@ -1,4 +1,4 @@
-import type { WorkspaceState } from './persistence';
+import { parseLocalWorkspaceProfile, type WorkspaceState } from './persistence';
 import { deleteUploadedFile, getUploadedFile, restoreUploadedFile, type StoredUploadedFile } from './fileStorage';
 import { deleteExtractedText, getExtractedText, saveExtractedText, type StoredExtractedText } from './extractedTextStorage';
 import { sha256 } from './fileIntegrity';
@@ -36,6 +36,7 @@ export interface ArchiveExportStorage {
   getFile(documentId: string): Promise<StoredUploadedFile | undefined>;
   getText(documentId: string): Promise<StoredExtractedText | undefined>;
 }
+export type ArchiveExportInspector = (blob: Blob) => Promise<unknown>;
 const defaultExportStorage: ArchiveExportStorage = {
   getFile: getUploadedFile,
   getText: getExtractedText,
@@ -171,12 +172,42 @@ const requireCollection = (root: Record<string, any>, key: string): unknown[] =>
   if (!Array.isArray(root[key])) throw new Error(`Archive workspace data is invalid: ${key} must be an array.`);
   return root[key];
 };
+const requireEnum = (value: unknown, allowed: readonly string[], label: string): void => {
+  if (typeof value !== 'string' || !allowed.includes(value)) throw new Error(`Archive workspace data is invalid: ${label} has an unsupported value.`);
+};
+const requireTimestamp = (value: unknown, label: string): void => {
+  if (typeof value !== 'string' || !value || Number.isNaN(Date.parse(value))) throw new Error(`Archive workspace data is invalid: ${label} must be a valid timestamp.`);
+};
+const requireUniqueIds = (values: unknown[], key: string, label: string): void => {
+  const seen = new Set<string>();
+  values.forEach((value, index) => {
+    const item = requireObject(value, `${label}[${index}]`);
+    requireString(item[key], `${label}[${index}].${key}`);
+    if (seen.has(item[key])) throw new Error(`Archive workspace data is invalid: ${label} contains duplicate ${key} ${item[key]}.`);
+    seen.add(item[key]);
+  });
+};
 
 const validateTransactionMember = (value: unknown, label: string): void => {
   const item = requireObject(value, label);
-  for (const key of ['transaction_id', 'transaction_date', 'raw_description', 'clean_vendor_name', 'transaction_type', 'processing_method', 'card_or_account_suffix', 'category']) requireString(item[key], `${label}.${key}`);
+  for (const key of ['transaction_id', 'transaction_date', 'raw_description', 'clean_vendor_name', 'card_or_account_suffix', 'category']) requireString(item[key], `${label}.${key}`);
+  requireEnum(item.transaction_type, ['credit', 'debit'], `${label}.transaction_type`);
+  requireEnum(item.processing_method, ['ACH', 'POS', 'ATM', 'Wire', 'Other'], `${label}.processing_method`);
+  if (item.verification_status !== undefined) requireEnum(item.verification_status, ['extracted', 'needs_review', 'confirmed', 'corrected', 'excluded', 'disputed'], `${label}.verification_status`);
+  if (item.duplicate_status !== undefined) requireEnum(item.duplicate_status, ['possible_duplicate', 'confirmed_duplicate', 'not_duplicate'], `${label}.duplicate_status`);
+  if (item.transfer_status !== undefined) requireEnum(item.transfer_status, ['possible_transfer', 'confirmed_transfer', 'not_transfer'], `${label}.transfer_status`);
   requireNumber(item.amount, `${label}.amount`);
   requireBoolean(item.is_pending, `${label}.is_pending`);
+  if (item.running_balance !== undefined) requireNumber(item.running_balance, `${label}.running_balance`);
+  if (item.splits !== undefined) {
+    if (!Array.isArray(item.splits)) throw new Error(`Archive workspace data is invalid: ${label}.splits must be an array.`);
+    item.splits.forEach((value: unknown, index: number) => {
+      const split = requireObject(value, `${label}.splits[${index}]`);
+      requireString(split.category, `${label}.splits[${index}].category`);
+      requireNumber(split.amount, `${label}.splits[${index}].amount`);
+      requireNumber(split.percentage, `${label}.splits[${index}].percentage`);
+    });
+  }
 };
 
 const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceState = (value: unknown): asserts value is WorkspaceState => {
@@ -189,11 +220,23 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
   const reconItems = requireCollection(root, 'reconItems');
   const auditLogs = requireCollection(root, 'auditLogs');
   const chatLog = requireCollection(root, 'chatLog');
+  requireUniqueIds(documents, 'id', 'documents');
+  requireUniqueIds(accounts, 'id', 'accounts');
+  requireUniqueIds(transactions, 'transaction_id', 'transactions');
+  requireUniqueIds(rules, 'id', 'rules');
+  requireUniqueIds(reconItems, 'id', 'reconItems');
+  requireUniqueIds(auditLogs, 'id', 'auditLogs');
+  requireUniqueIds(chatLog, 'id', 'chatLog');
+  if (root.profile !== undefined && !parseLocalWorkspaceProfile(root.profile)) throw new Error('Archive workspace data is invalid: profile is incomplete or malformed.');
 
   documents.forEach((value, index) => {
     const item = requireObject(value, `documents[${index}]`);
     for (const key of ['id', 'filename', 'upload_timestamp', 'file_type', 'ocr_status', 'processing_status']) requireString(item[key], `documents[${index}].${key}`);
     requireStringType(item.institution_name, `documents[${index}].institution_name`);
+    requireTimestamp(item.upload_timestamp, `documents[${index}].upload_timestamp`);
+    requireEnum(item.file_type, ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'], `documents[${index}].file_type`);
+    requireEnum(item.ocr_status, ['not_started', 'running', 'succeeded', 'failed', 'needs_review', 'Pending', 'Success', 'Low Confidence', 'Failed'], `documents[${index}].ocr_status`);
+    requireEnum(item.processing_status, ['Completed', 'Requires Classification', 'Requires Verification', 'Processing'], `documents[${index}].processing_status`);
     requireNumber(item.ocr_confidence, `documents[${index}].ocr_confidence`);
     if (item.sha256 !== undefined && (typeof item.sha256 !== 'string' || !SHA256_PATTERN.test(item.sha256))) throw new Error(`Archive workspace data is invalid: documents[${index}].sha256 must be a 64-character hexadecimal digest.`);
   });
@@ -201,6 +244,8 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
     const item = requireObject(value, `accounts[${index}]`);
     for (const key of ['id', 'account_name', 'account_suffix', 'account_type', 'statement_period', 'account_status']) requireString(item[key], `accounts[${index}].${key}`);
     requireStringType(item.institution_name, `accounts[${index}].institution_name`);
+    requireEnum(item.account_type, ['checking', 'savings', 'credit_card', 'loan', 'mortgage', 'investment'], `accounts[${index}].account_type`);
+    requireEnum(item.account_status, ['Active', 'Closed', 'Under Review'], `accounts[${index}].account_status`);
     requireNumber(item.current_balance, `accounts[${index}].current_balance`);
     requireNumber(item.available_balance, `accounts[${index}].available_balance`);
   });
@@ -219,12 +264,39 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
   auditLogs.forEach((value, index) => {
     const item = requireObject(value, `auditLogs[${index}]`);
     for (const key of ['id', 'timestamp', 'action', 'details', 'level', 'operator']) requireString(item[key], `auditLogs[${index}].${key}`);
+    requireTimestamp(item.timestamp, `auditLogs[${index}].timestamp`);
+    requireEnum(item.level, ['info', 'warning', 'critical'], `auditLogs[${index}].level`);
   });
   chatLog.forEach((value, index) => {
     const item = requireObject(value, `chatLog[${index}]`);
     for (const key of ['id', 'sender', 'text', 'timestamp']) requireString(item[key], `chatLog[${index}].${key}`);
+    requireTimestamp(item.timestamp, `chatLog[${index}].timestamp`);
+    requireEnum(item.sender, ['user', 'assistant'], `chatLog[${index}].sender`);
   });
   if (root.reportMetadata !== undefined) validateSavedReportSessions(root.reportMetadata, 'Archive workspace data reportMetadata');
+
+  const documentIds = new Set(documents.map(value => (value as Record<string, unknown>).id as string));
+  const accountIds = new Set(accounts.map(value => (value as Record<string, unknown>).id as string));
+  const transactionIds = new Set(transactions.map(value => (value as Record<string, unknown>).transaction_id as string));
+  documents.forEach((value, index) => {
+    const accountId = (value as Record<string, unknown>).account_id;
+    if (accountId !== undefined && (typeof accountId !== 'string' || !accountIds.has(accountId))) throw new Error(`Archive workspace data is invalid: documents[${index}].account_id references a missing account.`);
+  });
+  transactions.forEach((value, index) => {
+    const documentId = (value as Record<string, unknown>).source_document_id;
+    if (documentId !== undefined && (typeof documentId !== 'string' || !documentIds.has(documentId))) throw new Error(`Archive workspace data is invalid: transactions[${index}].source_document_id references a missing document.`);
+  });
+  reconItems.forEach((value, index) => {
+    const item = value as Record<string, any>;
+    if (item.documentId !== undefined && (typeof item.documentId !== 'string' || !documentIds.has(item.documentId))) throw new Error(`Archive workspace data is invalid: reconItems[${index}].documentId references a missing document.`);
+    for (const key of ['transactionA', 'transactionB']) {
+      if (item[key] !== undefined && !transactionIds.has(item[key].transaction_id)) throw new Error(`Archive workspace data is invalid: reconItems[${index}].${key} references a missing transaction.`);
+    }
+  });
+  auditLogs.forEach((value, index) => {
+    const accountId = (value as Record<string, unknown>).account_id;
+    if (accountId !== undefined && (typeof accountId !== 'string' || !accountIds.has(accountId))) throw new Error(`Archive workspace data is invalid: auditLogs[${index}].account_id references a missing account.`);
+  });
 };
 
 const validateMetadata = (value: unknown, expectedDocumentId: string, expectedSha256: string): Omit<StoredUploadedFile, 'blob'> => {
@@ -246,6 +318,21 @@ const validateExtractedText = (value: unknown, expectedDocumentId: string): Stor
   if (value.documentId !== expectedDocumentId) throw new Error(`Archive extracted text document ID disagreement for ${expectedDocumentId}.`);
   if (typeof value.text !== 'string' || !Array.isArray(value.pageTexts) || !value.pageTexts.every((item: unknown) => typeof item === 'string')) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: text and pageTexts are required.`);
   if (!Number.isSafeInteger(value.pageCount) || value.pageCount < 0 || typeof value.updatedAt !== 'string') throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: pageCount or updatedAt is invalid.`);
+  if (Number.isNaN(Date.parse(value.updatedAt))) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: updatedAt is invalid.`);
+  if (isPlainObject(value.structuredData)) {
+    for (const collectionName of ['candidates', 'legalCandidates'] as const) {
+      const collection = value.structuredData[collectionName];
+      if (collection === undefined) continue;
+      if (!Array.isArray(collection)) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName} must be an array.`);
+      const ids = new Set<string>();
+      collection.forEach((candidate: unknown, index: number) => {
+        if (!isPlainObject(candidate) || typeof candidate.id !== 'string' || !candidate.id) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName}[${index}].id is invalid.`);
+        if (ids.has(candidate.id)) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName} contains duplicate id ${candidate.id}.`);
+        ids.add(candidate.id);
+        if (candidate.documentId !== expectedDocumentId) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName}[${index}] references a different document.`);
+      });
+    }
+  }
   return value as StoredExtractedText;
 };
 
@@ -276,7 +363,13 @@ const readZipEntryCount = (buffer: ArrayBuffer): number => {
   throw new Error('Archive ZIP is invalid: end-of-central-directory record is missing.');
 };
 
-export async function exportProjectArchive(workspaceId: string, state: WorkspaceState, onProgress?: (completed: number, total: number) => void, storage: ArchiveExportStorage = defaultExportStorage): Promise<Blob> {
+export async function exportProjectArchive(
+  workspaceId: string,
+  state: WorkspaceState,
+  onProgress?: (completed: number, total: number) => void,
+  storage: ArchiveExportStorage = defaultExportStorage,
+  inspectExport: ArchiveExportInspector = inspectProjectArchive
+): Promise<Blob> {
   assertSafeJson(state, 'Workspace');
   const stateCopy = structuredClone(state);
   validateWorkspaceState(stateCopy);
@@ -331,7 +424,26 @@ export async function exportProjectArchive(workspaceId: string, state: Workspace
   }
   validateArchiveManifest(manifest);
   zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const storedPaths = new Set<string>();
+  const maximumAttempts = manifest.files.length + manifest.artifacts.length + 2;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+    try {
+      await inspectExport(blob);
+      return blob;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const entryMatch = message.match(/unreasonable compression ratio(?:: (.+))?\.$/i);
+      const path = entryMatch?.[1] || (/manifest has an unreasonable compression ratio/i.test(message) ? 'manifest.json' : undefined);
+      const entry = path ? zip.file(path) : undefined;
+      if (!entryMatch || !path || !entry || storedPaths.has(path)) {
+        throw new Error(`Complete archive self-verification failed: ${message}`);
+      }
+      entry.options.compression = 'STORE';
+      storedPaths.add(path);
+    }
+  }
+  throw new Error('Complete archive self-verification failed: compression compatibility could not be established within the archive entry limit.');
 }
 
 export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: ArchiveManifest; workspace: WorkspaceState; zip: any }> {
