@@ -48,10 +48,11 @@ import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage,
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
 import { migrateLegacyTransactions, verifiedTransactionsOnly } from './utils/verifiedTransactions';
 import { exportProjectArchive, inspectProjectArchive, restoreProjectArchive } from './utils/projectArchive';
-import { loadWorkspace, saveWorkspace, commitImportedWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, createWorkspaceId, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, createWorkspaceId, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
-import { resolveReportSessions, writeReportSessions } from './utils/reportSessions';
+import { resolveReportSessions } from './utils/reportSessions';
+import { commitRestoredArchive } from './utils/archiveImportCommit';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -384,15 +385,8 @@ export default function App() {
     const restored = await restoreProjectArchive(file, documentIdMap);
     restored.documents = restored.documents.map(document => ({ ...document, project_id: newWorkspaceId }));
     restored.profile = { ...(restored.profile || { userDisplayName: 'Local User', jurisdiction: restored.jurisdiction, createdAt: new Date().toISOString(), appVersion }), workspaceName: importName, caseProjectName: importName, lastOpenedAt: new Date().toISOString() };
-    try {
-      commitImportedWorkspace(newWorkspaceId, restored);
-    } catch (error) {
-      const restoredDocumentIds = restored.documents.map(document => document.id);
-      await Promise.all([deleteStoredFilesByDocumentIds(restoredDocumentIds), deleteExtractedTextsByDocumentIds(restoredDocumentIds)]);
-      throw error;
-    }
+    await commitRestoredArchive(newWorkspaceId, restored);
     setActiveWorkspaceIdState(newWorkspaceId);
-    if (Array.isArray(restored.reportMetadata)) writeReportSessions(newWorkspaceId, restored.reportMetadata);
     applyWorkspaceState(restored);
     setWorkspaceSummaries(getWorkspaceSummaries());
     setHasOpenedProject(true);

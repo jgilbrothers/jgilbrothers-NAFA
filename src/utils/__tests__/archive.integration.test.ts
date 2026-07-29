@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
 import { clearStoredFiles, getUploadedFile, saveUploadedFile } from '../fileStorage';
 import { deleteExtractedText, getExtractedText, saveExtractedText } from '../extractedTextStorage';
-import { ARCHIVE_LIMITS, ARCHIVE_SCHEMA_VERSION, exportProjectArchive, inspectProjectArchive, restoreProjectArchive, validateArchiveManifest, type ArchiveManifest, type ArchiveRestoreStorage } from '../projectArchive';
+import { ARCHIVE_LIMITS, ARCHIVE_SCHEMA_VERSION, exportProjectArchive, inspectProjectArchive, restoreProjectArchive, validateArchiveManifest, type ArchiveExportStorage, type ArchiveManifest, type ArchiveRestoreStorage } from '../projectArchive';
 import { sha256 } from '../fileIntegrity';
 import type { WorkspaceState } from '../persistence';
 
@@ -40,6 +40,31 @@ describe('complete project archive lifecycle', () => {
     expect((await getExtractedText('DOC-ROUNDTRIP'))?.structuredData).toEqual({ Sheet1: [['Header'], ['Value']] });
   });
 
+  it('enforces complete-export claims symmetrically for source files and extracted text', async () => {
+    const state = workspace('COMPLETE-CLAIMS');
+    state.documents[0].extracted_text_available = true;
+    state.documents[0].extracted_text_id = state.documents[0].id;
+    const source = { documentId: state.documents[0].id, originalFileName: 'synthetic.txt', mimeType: 'text/plain', size: 6, uploadedAt: '2026-01-01T00:00:00.000Z', blob: new Blob(['source'], { type: 'text/plain' }) };
+    const text = { documentId: state.documents[0].id, text: 'extracted', pageTexts: ['extracted'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' };
+    const complete: ArchiveExportStorage = { getFile: async () => source, getText: async () => text };
+    const inspected = await inspectProjectArchive(await exportProjectArchive('COMPLETE-CLAIMS', state, undefined, complete));
+    expect(inspected.manifest.files).toHaveLength(1);
+    expect(inspected.manifest.artifacts.some(item => item.path === `extracted-text/${state.documents[0].id}.json`)).toBe(true);
+
+    await expect(exportProjectArchive('SOURCE-READ-FAIL', state, undefined, { ...complete, getFile: async () => { throw new Error('synthetic source read rejection'); } })).rejects.toThrow(/source file.*could not be read/i);
+    await expect(exportProjectArchive('TEXT-READ-FAIL', state, undefined, { ...complete, getText: async () => { throw new Error('synthetic text read rejection'); } })).rejects.toThrow(/extracted text.*could not be read/i);
+    await expect(exportProjectArchive('SOURCE-MISSING', state, undefined, { ...complete, getFile: async () => undefined })).rejects.toThrow(/claims a retained source file.*missing/i);
+    await expect(exportProjectArchive('TEXT-MISSING', state, undefined, { ...complete, getText: async () => undefined })).rejects.toThrow(/claims extracted text.*missing/i);
+    await expect(exportProjectArchive('TEXT-MALFORMED', state, undefined, { ...complete, getText: async () => ({ ...text, pageTexts: [7] } as any) })).rejects.toThrow(/extracted text is invalid/i);
+
+    const unavailable = workspace('EXPLICITLY-UNAVAILABLE');
+    unavailable.documents[0] = { ...unavailable.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false }, extracted_text_available: false, extracted_text_id: undefined };
+    await expect(exportProjectArchive('EXPLICITLY-UNAVAILABLE', unavailable, undefined, {
+      getFile: async () => { throw new Error('unavailable source storage'); },
+      getText: async () => { throw new Error('unavailable text storage'); },
+    })).resolves.toBeInstanceOf(Blob);
+  });
+
   it('round-trips an account with an empty optional institution name while keeping required fields strict', async () => {
     const state = workspace('EMPTY-INSTITUTION');
     state.accounts = [{
@@ -65,6 +90,50 @@ describe('complete project archive lifecycle', () => {
     });
     await expect(inspectProjectArchive(malformed)).rejects.toThrow(/account_name must be a non-empty string/);
   });
+
+  it('round-trips supported empty document and account institution names', async () => {
+    const state = workspace('EMPTY-DISPLAY-FIELDS');
+    state.documents[0] = { ...state.documents[0], institution_name: '', source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.accounts = [{
+      id: 'ACC-EMPTY', account_name: 'Synthetic', account_suffix: '0000', account_type: 'checking',
+      institution_name: '', current_balance: 0, available_balance: 0, statement_period: 'Current', account_status: 'Active',
+    }];
+    const restored = await restoreProjectArchive(await exportProjectArchive('EMPTY-DISPLAY-FIELDS', state));
+    expect(restored.documents[0].institution_name).toBe('');
+    expect(restored.accounts[0].institution_name).toBe('');
+    await expect(exportProjectArchive('EMPTY-ID', { ...state, documents: [{ ...state.documents[0], id: '' }] })).rejects.toThrow(/documents\[0\]\.id must be a non-empty string/);
+    await expect(exportProjectArchive('EMPTY-FILENAME', { ...state, documents: [{ ...state.documents[0], filename: '' }] })).rejects.toThrow(/filename must be a non-empty string/);
+  });
+
+  it('exports and imports the advertised maximum documents with source and text artifacts', async () => {
+    const state = workspace('MAXIMUM');
+    state.documents = Array.from({ length: ARCHIVE_LIMITS.maxDocuments }, (_, index) => ({
+      ...state.documents[0],
+      id: `DOC-MAX-${index + 1}`,
+      filename: `source-${index + 1}.txt`,
+      extracted_text_available: true,
+      extracted_text_id: `DOC-MAX-${index + 1}`,
+    }));
+    const storage: ArchiveExportStorage = {
+      getFile: async documentId => {
+        const contents = `source-${documentId}`;
+        return { documentId, originalFileName: `${documentId}.txt`, mimeType: 'text/plain', size: new Blob([contents]).size, uploadedAt: '2026-01-01T00:00:00.000Z', blob: new Blob([contents], { type: 'text/plain' }) };
+      },
+      getText: async documentId => ({ documentId, text: `text-${documentId}`, pageTexts: [`text-${documentId}`], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z' }),
+    };
+    state.documents.forEach(document => { document.filename = `${document.id}.txt`; });
+    const archive = await exportProjectArchive('MAXIMUM', state, undefined, storage);
+    const zip = await JSZip.loadAsync(await archive.arrayBuffer());
+    expect(Object.values(zip.files).filter(entry => !entry.dir)).toHaveLength((ARCHIVE_LIMITS.maxDocuments * 3) + 2);
+    const memory = validationMemoryStorage();
+    const restored = await restoreProjectArchive(archive, {}, memory.storage);
+    expect(restored.documents).toHaveLength(ARCHIVE_LIMITS.maxDocuments);
+    expect(memory.files.size).toBe(ARCHIVE_LIMITS.maxDocuments);
+    expect(memory.texts.size).toBe(ARCHIVE_LIMITS.maxDocuments);
+
+    const excessive = { ...state, documents: [...state.documents, { ...state.documents[0], id: 'DOC-MAX-EXCESS', filename: 'excess.txt', extracted_text_id: 'DOC-MAX-EXCESS' }] };
+    await expect(exportProjectArchive('MAXIMUM-EXCESS', excessive, undefined, storage)).rejects.toThrow(/more than 500 documents/);
+  }, 30_000);
 
   it('round-trips reserved and encoded source filenames without artifact collisions', async () => {
     const names = ['metadata.json', 'workspace.json', 'manifest.json', 'encoded name #%.json'];
@@ -451,6 +520,20 @@ describe('archive-wide trust boundaries', () => {
       await replaceArtifact(zip, manifest, 'workspace.json', text);
     });
     await expect(inspectProjectArchive(polluted)).rejects.toThrow(/prohibited key/);
+  });
+
+  it('counts user-data ZIP entries separately from directory bookkeeping entries', async () => {
+    const state = workspace('DIRECTORIES');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    const archive = await exportProjectArchive('DIRECTORIES', state);
+    const withDirectories = await rewriteArchive(archive, zip => {
+      for (let index = 0; index < ARCHIVE_LIMITS.maxDocuments * 2; index += 1) zip.folder(`directory-${index}`);
+    });
+    await expect(inspectProjectArchive(withDirectories)).resolves.toMatchObject({ workspace: { documents: expect.any(Array) } });
+
+    const excessive = new JSZip();
+    for (let index = 0; index < ARCHIVE_LIMITS.maxEntries + 2; index += 1) excessive.file(`entry-${index}.txt`, '');
+    await expect(inspectProjectArchive(await excessive.generateAsync({ type: 'blob' }))).rejects.toThrow(/non-directory ZIP entries/);
   });
 
   it('rejects an inconsistent ZIP entry table that can indicate duplicate decoded names', async () => {

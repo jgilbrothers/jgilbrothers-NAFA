@@ -31,6 +31,14 @@ export interface ArchiveRestoreStorage {
   deleteFile(documentId: string): Promise<void>;
   deleteText(documentId: string): Promise<void>;
 }
+export interface ArchiveExportStorage {
+  getFile(documentId: string): Promise<StoredUploadedFile | undefined>;
+  getText(documentId: string): Promise<StoredExtractedText | undefined>;
+}
+const defaultExportStorage: ArchiveExportStorage = {
+  getFile: getUploadedFile,
+  getText: getExtractedText,
+};
 const defaultRestoreStorage: ArchiveRestoreStorage = {
   getFile: getUploadedFile,
   getText: getExtractedText,
@@ -183,7 +191,8 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
 
   documents.forEach((value, index) => {
     const item = requireObject(value, `documents[${index}]`);
-    for (const key of ['id', 'filename', 'upload_timestamp', 'file_type', 'ocr_status', 'institution_name', 'processing_status']) requireString(item[key], `documents[${index}].${key}`);
+    for (const key of ['id', 'filename', 'upload_timestamp', 'file_type', 'ocr_status', 'processing_status']) requireString(item[key], `documents[${index}].${key}`);
+    requireStringType(item.institution_name, `documents[${index}].institution_name`);
     requireNumber(item.ocr_confidence, `documents[${index}].ocr_confidence`);
     if (item.sha256 !== undefined && (typeof item.sha256 !== 'string' || !SHA256_PATTERN.test(item.sha256))) throw new Error(`Archive workspace data is invalid: documents[${index}].sha256 must be a 64-character hexadecimal digest.`);
   });
@@ -265,7 +274,7 @@ const readZipEntryCount = (buffer: ArrayBuffer): number => {
   throw new Error('Archive ZIP is invalid: end-of-central-directory record is missing.');
 };
 
-export async function exportProjectArchive(workspaceId: string, state: WorkspaceState, onProgress?: (completed: number, total: number) => void): Promise<Blob> {
+export async function exportProjectArchive(workspaceId: string, state: WorkspaceState, onProgress?: (completed: number, total: number) => void, storage: ArchiveExportStorage = defaultExportStorage): Promise<Blob> {
   assertSafeJson(state, 'Workspace');
   const stateCopy = structuredClone(state);
   validateWorkspaceState(stateCopy);
@@ -279,14 +288,18 @@ export async function exportProjectArchive(workspaceId: string, state: Workspace
   let complete = 0;
   const total = stateCopy.documents.length * 2;
   for (const document of stateCopy.documents) {
-    const file = await getUploadedFile(document.id).catch(error => {
-      if (document.source_file_status === 'stored') throw new Error(`Complete archive stopped: the retained source file for ${document.filename || document.id} could not be read. ${error instanceof Error ? error.message : ''}`.trim());
+    const claimsSourceFile = document.source_file_status === 'stored' || document.local_file?.stored === true;
+    const file = await storage.getFile(document.id).catch(error => {
+      if (claimsSourceFile) throw new Error(`Complete archive stopped: the retained source file for ${document.filename || document.id} could not be read. ${error instanceof Error ? error.message : ''}`.trim());
       return undefined;
     });
-    if (document.source_file_status === 'stored' && !file?.blob) throw new Error(`Complete archive stopped: ${document.filename || document.id} claims a retained source file, but its stored bytes are missing.`);
+    if (claimsSourceFile && !file?.blob) throw new Error(`Complete archive stopped: ${document.filename || document.id} claims a retained source file, but its stored bytes are missing.`);
     if (file?.blob) {
+      if (file.documentId !== document.id) throw new Error(`Complete archive stopped: the retained source-file record is inconsistent for document ${document.id}.`);
       if (file.blob.size > ARCHIVE_LIMITS.maxSourceFileBytes) throw new Error(`Source file ${file.originalFileName} exceeds the archive size limit.`);
+      if (file.size !== file.blob.size) throw new Error(`Complete archive stopped: retained source-file size metadata is inconsistent for document ${document.id}.`);
       const checksum = await sha256(file.blob);
+      validateMetadata({ ...file, size: file.blob.size, sha256: checksum }, document.id, checksum);
       const path = `source-files/${file.documentId}/content/${encodeURIComponent(file.originalFileName)}`;
       validateArchivePath(path, 'source file');
       zip.file(path, await file.blob.arrayBuffer());
@@ -298,8 +311,14 @@ export async function exportProjectArchive(workspaceId: string, state: Workspace
       manifest.artifacts.push({ path: metadataPath, sha256: await sha256(new Blob([metadataJson])), size: textBytes(metadataJson) });
     }
     onProgress?.(++complete, total);
-    const extracted = await getExtractedText(document.id).catch(() => undefined);
+    const claimsExtractedText = document.extracted_text_available === true || Boolean(document.extracted_text_id);
+    const extracted = await storage.getText(document.id).catch(error => {
+      if (claimsExtractedText) throw new Error(`Complete archive stopped: extracted text for document ${document.id} could not be read. ${error instanceof Error ? error.message : ''}`.trim());
+      return undefined;
+    });
+    if (claimsExtractedText && !extracted) throw new Error(`Complete archive stopped: document ${document.id} claims extracted text, but its stored extracted-text record is missing.`);
     if (extracted) {
+      validateExtractedText(extracted, document.id);
       const path = `extracted-text/${extracted.documentId}.json`;
       const contents = JSON.stringify(extracted, null, 2);
       if (textBytes(contents) > ARCHIVE_LIMITS.maxExtractedTextBytes) throw new Error(`Extracted text for ${document.id} exceeds the archive size limit.`);
@@ -319,12 +338,14 @@ export async function inspectProjectArchive(blob: Blob): Promise<{ manifest: Arc
   let zip: any;
   const archiveBuffer = await blob.arrayBuffer();
   const declaredZipEntries = readZipEntryCount(archiveBuffer);
-  const maxZipEntries = ARCHIVE_LIMITS.maxEntries + ARCHIVE_LIMITS.maxDocuments + 3;
+  const maxZipEntries = ARCHIVE_LIMITS.maxEntries + (ARCHIVE_LIMITS.maxDocuments * 2) + 3;
   if (declaredZipEntries > maxZipEntries) throw new Error(`Archive contains more than ${maxZipEntries} ZIP entries.`);
   try { zip = await JSZip.loadAsync(archiveBuffer, { checkCRC32: true, createFolders: false }); }
   catch (error) { throw new Error(`Archive ZIP is invalid: ${error instanceof Error ? error.message : 'unable to read ZIP'}.`); }
   const entries = Object.values(zip.files) as any[];
   if (entries.length !== declaredZipEntries) throw new Error('Archive contains duplicate or ambiguously decoded ZIP entry names.');
+  const fileEntries = entries.filter(entry => !entry.dir);
+  if (fileEntries.length > ARCHIVE_LIMITS.maxEntries + 1) throw new Error(`Archive contains more than ${ARCHIVE_LIMITS.maxEntries + 1} non-directory ZIP entries.`);
   for (const entry of entries) if (!entry.dir) validateArchivePath(entry.name, 'ZIP entry');
   const manifestEntry = zip.file('manifest.json');
   if (!manifestEntry) throw new Error('Archive is missing manifest.json.');
@@ -434,18 +455,23 @@ export async function restoreProjectArchive(blob: Blob, documentIdMap: Record<st
   for (const id of targetIds) {
     if (await storage.getFile(id) || await storage.getText(id)) throw new Error(`Archive restore collision: destination document ${id} already has local records.`);
   }
-  const committedFiles: string[] = [];
-  const committedTexts: string[] = [];
+  const rollbackJournal: Array<{ category: 'source file' | 'extracted text'; documentId: string; rollback: () => Promise<void> }> = [];
   try {
-    for (const file of prepared.files) { await storage.putFile(file); committedFiles.push(file.documentId); }
-    for (const extracted of prepared.texts) { await storage.putText(extracted); committedTexts.push(extracted.documentId); }
+    for (const file of prepared.files) {
+      await storage.putFile(file);
+      rollbackJournal.push({ category: 'source file', documentId: file.documentId, rollback: () => storage.deleteFile(file.documentId) });
+    }
+    for (const extracted of prepared.texts) {
+      await storage.putText(extracted);
+      rollbackJournal.push({ category: 'extracted text', documentId: extracted.documentId, rollback: () => storage.deleteText(extracted.documentId) });
+    }
   } catch (error) {
-    const rollback = await Promise.allSettled([
-      ...committedTexts.map(id => storage.deleteText(id)),
-      ...committedFiles.map(id => storage.deleteFile(id)),
-    ]);
-    const failed = rollback.filter(result => result.status === 'rejected').length;
-    if (failed) throw new Error(`Archive restore failed and rollback was incomplete for ${failed} local record(s). Original error: ${error instanceof Error ? error.message : String(error)}`);
+    const failed: string[] = [];
+    for (const action of [...rollbackJournal].reverse()) {
+      try { await action.rollback(); }
+      catch { failed.push(`${action.category} ${action.documentId}`); }
+    }
+    if (failed.length) throw new Error(`Archive restore failed and rollback was incomplete for ${failed.join(', ')}. Original error: ${error instanceof Error ? error.message : String(error)}`);
     throw new Error(`Archive restore failed before completion; all newly written local records were rolled back. ${error instanceof Error ? error.message : String(error)}`);
   }
   return structuredClone(prepared.workspace);

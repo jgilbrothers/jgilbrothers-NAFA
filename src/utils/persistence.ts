@@ -157,10 +157,16 @@ export function commitImportedWorkspace(id: string, state: WorkspaceState): void
     localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify([summarizeWorkspace(id, normalized), ...currentSummaries]));
     localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
   } catch (error) {
-    for (const [key, value] of previous) {
-      if (value === null) localStorage.removeItem(key);
-      else localStorage.setItem(key, value);
+    const rollbackFailures: string[] = [];
+    for (const [key, value] of [...previous.entries()].reverse()) {
+      try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      } catch {
+        rollbackFailures.push(key);
+      }
     }
+    if (rollbackFailures.length) throw new Error(`Imported workspace persistence failed and rollback was incomplete for workspace storage. Original error: ${error instanceof Error ? error.message : String(error)}`);
     throw new Error(`Imported workspace persistence failed and was rolled back. ${error instanceof Error ? error.message : String(error)}`);
   }
 }
