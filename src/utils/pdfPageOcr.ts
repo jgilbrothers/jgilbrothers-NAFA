@@ -5,6 +5,16 @@ import type { PdfTextExtractionResult } from './pdfTextExtractor';
 
 export interface PdfOcrPageResult { page: number; text: string; confidence?: number; engine: 'tesseract-local'; timestamp: string; status: 'succeeded' | 'needs_review' | 'failed'; error?: string; }
 export interface PdfOcrProgress { page: number; totalPages: number; stage: 'rendering' | 'ocr'; ocr?: LocalOcrProgress; }
+export interface MergedPdfOcrState {
+  textAvailable: boolean;
+  confidence: number;
+  requiresReview: boolean;
+  failedPageCount: number;
+  error?: string;
+  ocrStatus: 'succeeded' | 'needs_review';
+  textExtractionStatus: 'succeeded' | 'needs_review';
+  processingStatus: 'Requires Verification';
+}
 
 export const unreadablePdfPages = (pageTexts: string[], minimumMeaningfulCharacters = 10) => pageTexts
   .map((text, index) => ({ text, page: index + 1 }))
@@ -62,11 +72,29 @@ export function mergePdfOcrResults(existing: StoredExtractedText | undefined, pa
     }
   }
   const retriedPages = new Set(results.map(result => result.page));
-  const warnings = [...(existing?.warnings || []).filter(warning => {
+  let warnings = [...(existing?.warnings || []).filter(warning => {
     const page = warning.match(/^OCR page (\d+):/i)?.[1];
     return !page || !retriedPages.has(Number(page));
   }), ...results.filter(result => result.status !== 'succeeded').map(result => `OCR page ${result.page}: ${result.error || 'needs user review'}`)];
+  if (unreadablePdfPages(pageTexts).length === 0) warnings = warnings.filter(warning => !/(?:contained no selectable text|may require OCR)/i.test(warning));
   return { documentId: existing?.documentId || '', text: pageTexts.map((text, index) => `--- Page ${index + 1} ---\n${text}`).join('\n\n'), pageTexts, pageCount, updatedAt: new Date().toISOString(), pageMappingApproximate: false, parser: results.some(result => result.text.trim()) ? 'ocr' : existing?.parser || 'pdfjs', warnings, pageConfidences, pageEngines };
+}
+
+/** Derive document-level OCR metadata from every merged page, never from only the retry subset. */
+export function summarizeMergedPdfOcrState(merged: StoredExtractedText, fallbackConfidence = 0): MergedPdfOcrState {
+  const confidences = (merged.pageConfidences || []).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  const failedWarnings = (merged.warnings || []).filter(warning => /^OCR page \d+:.*(?:fail|error)/i.test(warning));
+  const requiresReview = (merged.warnings || []).length > 0 || confidences.some(confidence => confidence < 0.85);
+  return {
+    textAvailable: merged.pageTexts.some(text => text.trim().length > 0),
+    confidence: confidences.length ? Math.min(...confidences) : fallbackConfidence,
+    requiresReview,
+    failedPageCount: failedWarnings.length,
+    error: failedWarnings.length ? `${failedWarnings.length} page(s) failed OCR; prior valid text was preserved.` : undefined,
+    ocrStatus: requiresReview ? 'needs_review' : 'succeeded',
+    textExtractionStatus: requiresReview ? 'needs_review' : 'succeeded',
+    processingStatus: 'Requires Verification',
+  };
 }
 
 /** Merge a PDF.js reread without erasing OCR text or provenance for still-unreadable pages. */

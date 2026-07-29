@@ -25,7 +25,7 @@ import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, L
 import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
 import { getActiveWorkspaceId } from '../utils/persistence';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
-import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
+import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, summarizeMergedPdfOcrState, unreadablePdfPages } from '../utils/pdfPageOcr';
 import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
 import { extractLegalCandidates, parseLegalCandidate, type LegalCandidate } from '../utils/legalDocumentExtractor';
 import { isVerifiedTransaction } from '../utils/verifiedTransactions';
@@ -1031,12 +1031,11 @@ export default function DocumentsView({
       merged.documentId = doc.id;
       await saveExtractedText(merged);
       setExtractedText(merged.text);
-      const failed = results.filter(result => result.status === 'failed').length;
-      const needsReview = results.filter(result => result.status === 'needs_review').length;
-      const updates: Partial<DocumentRecord> = { text_read: merged.pageTexts.some(text => text.trim()), text_read_at: merged.updatedAt, extracted_text_available: merged.pageTexts.some(text => text.trim()), extracted_text_id: doc.id, page_count: pageCount, page_mapping_approximate: false, text_source: 'ocr', text_parser: 'ocr', ocr_engine: 'tesseract-local', ocr_read_at: merged.updatedAt, ocr_status: failed ? 'needs_review' : needsReview ? 'needs_review' : 'succeeded', ocr_text_available: results.some(result => result.text.trim()), ocr_confidence: Math.min(...results.map(result => result.confidence ?? 0)), ocr_error: failed ? `${failed} page(s) failed OCR; prior valid text was preserved.` : undefined, text_extraction_status: failed || needsReview ? 'needs_review' : 'succeeded', extraction_engine: 'pdfjs+tesseract-local', extraction_timestamp: merged.updatedAt, extraction_warnings: merged.warnings, processing_status: failed || needsReview ? 'Requires Verification' : 'Requires Verification' };
+      const summary = summarizeMergedPdfOcrState(merged, doc.ocr_confidence);
+      const updates: Partial<DocumentRecord> = { text_read: summary.textAvailable, text_read_at: merged.updatedAt, extracted_text_available: summary.textAvailable, extracted_text_id: summary.textAvailable ? doc.id : undefined, page_count: pageCount, page_mapping_approximate: false, text_source: 'ocr', text_parser: 'ocr', ocr_engine: 'tesseract-local', ocr_read_at: merged.updatedAt, ocr_status: summary.ocrStatus, ocr_text_available: summary.textAvailable, ocr_confidence: summary.confidence, ocr_error: summary.error, text_extraction_status: summary.textExtractionStatus, extraction_engine: 'pdfjs+tesseract-local', extraction_timestamp: merged.updatedAt, extraction_warnings: merged.warnings, processing_status: summary.processingStatus };
       onUpdateDocument?.(doc.id, updates);
       setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
-      failed ? setErrorNotification(`OCR finished with ${failed} failed page(s). Previously valid text was preserved.`) : setSuccessNotification(`OCR completed for ${results.length} page(s). Review page text before extracting candidates.`);
+      summary.failedPageCount ? setErrorNotification(`OCR finished with ${summary.failedPageCount} failed page(s). Previously valid text was preserved.`) : setSuccessNotification(`OCR completed for ${results.length} page(s). Review page text before extracting candidates.`);
     } catch (error) {
       if (controller.signal.aborted) setErrorNotification('PDF OCR cancelled. Previously saved text was preserved.');
       else setErrorNotification(error instanceof Error ? error.message : 'PDF OCR failed.');

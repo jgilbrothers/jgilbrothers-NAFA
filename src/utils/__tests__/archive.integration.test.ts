@@ -91,6 +91,48 @@ describe('complete project archive lifecycle', () => {
     await expect(inspectProjectArchive(malformed)).rejects.toThrow(/account_name must be a non-empty string/);
   });
 
+  it('validates the complete optional Transaction runtime shape before activation', async () => {
+    const state = workspace('TRANSACTION-SHAPE');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    state.transactions = [{
+      transaction_id: 'TX-COMPLETE', transaction_date: '2026-01-02', exact_timestamp: '2026-01-02T12:00:00.000Z',
+      raw_description: 'Synthetic transaction', clean_vendor_name: 'Synthetic', amount: 12.34, transaction_type: 'debit',
+      processing_method: 'ACH', card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false,
+      running_balance: 100, notes: '', source_document_id: 'DOC-HISTORICAL', source_page: 2,
+      source_page_approximate: false, source_line: 3, source_sheet: 'Transactions', source_row: 4,
+      source_excerpt: 'Synthetic transaction 12.34', extraction_engine: 'synthetic',
+      extraction_timestamp: '2026-01-02T12:01:00.000Z', verification_status: 'confirmed', confidence_score: .92,
+      classification_ruleset_version: 'neutral-v1', splits: [{ category: 'Miscellaneous', amount: 12.34, percentage: 100 }],
+      manual_override: true, original_category: 'Other', override_reason: 'Synthetic correction',
+      last_updated: '2026-01-02T12:02:00.000Z', duplicate_status: 'not_duplicate', transfer_status: 'not_transfer',
+    }];
+    const archive = await exportProjectArchive('TRANSACTION-SHAPE', state);
+    expect((await restoreProjectArchive(archive)).transactions).toEqual(state.transactions);
+
+    const invalidCases: Array<[(transaction: any) => void, RegExp]> = [
+      [transaction => { transaction.notes = {}; }, /notes must be a string/],
+      [transaction => { transaction.manual_override = 'yes'; }, /manual_override must be a boolean/],
+      [transaction => { transaction.running_balance = 'not-finite'; }, /running_balance must be a finite number/],
+      [transaction => { transaction.extraction_timestamp = 'not-a-date'; }, /extraction_timestamp must be a valid timestamp/],
+      [transaction => { transaction.source_row = 0; }, /source_row must be a positive safe integer/],
+      [transaction => { transaction.confidence_score = 2; }, /confidence_score must be between 0 and 1/],
+      [transaction => { transaction.transfer_status = 'maybe'; }, /transfer_status has an unsupported value/],
+      [transaction => { transaction.splits = [{ category: 'Miscellaneous', amount: 1, percentage: 100, metadata: {} }]; }, /splits\[0\] contains an unsupported field/],
+      [transaction => { transaction.metadata = {}; }, /contains an unsupported field/],
+    ];
+    for (const [mutate, message] of invalidCases) {
+      const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+        const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+        mutate(parsed.transactions[0]);
+        await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+      });
+      const memory = validationMemoryStorage();
+      await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(message);
+      expect(memory.files.size).toBe(0);
+      expect(memory.texts.size).toBe(0);
+    }
+  });
+
   it('round-trips supported empty document and account institution names', async () => {
     const state = workspace('EMPTY-DISPLAY-FIELDS');
     state.documents[0] = { ...state.documents[0], institution_name: '', source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };

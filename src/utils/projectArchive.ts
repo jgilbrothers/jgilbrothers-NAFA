@@ -243,6 +243,15 @@ const validateOptionalDocumentFields = (item: Record<string, any>, label: string
 
 const validateTransactionMember = (value: unknown, label: string): void => {
   const item = requireObject(value, label);
+  const supportedFields = new Set([
+    'transaction_id', 'transaction_date', 'exact_timestamp', 'raw_description', 'clean_vendor_name', 'amount',
+    'transaction_type', 'processing_method', 'card_or_account_suffix', 'category', 'is_pending', 'running_balance',
+    'notes', 'source_document_id', 'source_page', 'source_page_approximate', 'source_line', 'source_sheet', 'source_row',
+    'source_excerpt', 'extraction_engine', 'extraction_timestamp', 'verification_status', 'confidence_score',
+    'classification_ruleset_version', 'splits', 'manual_override', 'original_category', 'override_reason', 'last_updated',
+    'duplicate_status', 'transfer_status',
+  ]);
+  if (Object.keys(item).some(key => !supportedFields.has(key))) throw new Error(`Archive workspace data is invalid: ${label} contains an unsupported field.`);
   for (const key of ['transaction_id', 'transaction_date', 'raw_description', 'clean_vendor_name', 'card_or_account_suffix', 'category']) requireString(item[key], `${label}.${key}`);
   requireEnum(item.transaction_type, ['credit', 'debit'], `${label}.transaction_type`);
   requireEnum(item.processing_method, ['ACH', 'POS', 'ATM', 'Wire', 'Other'], `${label}.processing_method`);
@@ -253,10 +262,27 @@ const validateTransactionMember = (value: unknown, label: string): void => {
   requireNumber(item.amount, `${label}.amount`);
   requireBoolean(item.is_pending, `${label}.is_pending`);
   if (item.running_balance !== undefined) requireNumber(item.running_balance, `${label}.running_balance`);
+  for (const key of ['notes', 'source_sheet', 'source_excerpt', 'extraction_engine', 'classification_ruleset_version', 'original_category', 'override_reason']) {
+    requireOptionalString(item, key, label);
+  }
+  for (const key of ['exact_timestamp', 'extraction_timestamp', 'last_updated']) {
+    if (item[key] !== undefined) requireTimestamp(item[key], `${label}.${key}`);
+  }
+  for (const key of ['source_page', 'source_line', 'source_row']) {
+    if (item[key] !== undefined && (!Number.isSafeInteger(item[key]) || item[key] < 1)) {
+      throw new Error(`Archive workspace data is invalid: ${label}.${key} must be a positive safe integer.`);
+    }
+  }
+  for (const key of ['source_page_approximate', 'manual_override']) requireOptionalBoolean(item, key, label);
+  if (item.confidence_score !== undefined) {
+    requireNumber(item.confidence_score, `${label}.confidence_score`);
+    if (item.confidence_score < 0 || item.confidence_score > 1) throw new Error(`Archive workspace data is invalid: ${label}.confidence_score must be between 0 and 1.`);
+  }
   if (item.splits !== undefined) {
     if (!Array.isArray(item.splits)) throw new Error(`Archive workspace data is invalid: ${label}.splits must be an array.`);
     item.splits.forEach((value: unknown, index: number) => {
       const split = requireObject(value, `${label}.splits[${index}]`);
+      if (Object.keys(split).some(key => !['category', 'amount', 'percentage'].includes(key))) throw new Error(`Archive workspace data is invalid: ${label}.splits[${index}] contains an unsupported field.`);
       requireString(split.category, `${label}.splits[${index}].category`);
       requireNumber(split.amount, `${label}.splits[${index}].amount`);
       requireNumber(split.percentage, `${label}.splits[${index}].percentage`);

@@ -4,7 +4,7 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../documentIngestion';
 import { extractPdfText, reconstructPdfPageText } from '../pdfTextExtractor';
-import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../pdfPageOcr';
+import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, summarizeMergedPdfOcrState, unreadablePdfPages } from '../pdfPageOcr';
 import * as localOcr from '../localOcr';
 import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows } from '../spreadsheetCandidates';
 import { extractTransactionCandidates } from '../transactionExtractor';
@@ -212,6 +212,46 @@ describe('real ingestion interfaces', () => {
     const retried = mergePdfOcrResults(failed, 2, [{ page: 2, text: 'recovered text', confidence: .91, engine: 'tesseract-local', timestamp: 'later', status: 'succeeded' }]);
     expect(retried.pageTexts).toEqual(['valid old text', 'recovered text']);
     expect(retried.warnings).toContain('OCR page 1: synthetic failure');
+  });
+
+  it('derives partial OCR retry status and confidence from every merged page', () => {
+    const prior = {
+      documentId: 'DOC-OCR-MERGED',
+      text: 'old',
+      pageTexts: ['retained low-confidence text', ''],
+      pageCount: 2,
+      updatedAt: 'before',
+      parser: 'ocr' as const,
+      warnings: ['OCR page 1: needs user review', 'OCR page 2: synthetic failure'],
+      pageConfidences: [.64, undefined],
+      pageEngines: ['tesseract-local', 'tesseract-local'],
+    };
+    const merged = mergePdfOcrResults(prior, 2, [{ page: 2, text: 'replacement text', confidence: .96, engine: 'tesseract-local', timestamp: 'later', status: 'succeeded' }]);
+    const summary = summarizeMergedPdfOcrState(merged);
+
+    expect(merged.pageTexts).toEqual(['retained low-confidence text', 'replacement text']);
+    expect(merged.warnings).toEqual(['OCR page 1: needs user review']);
+    expect(merged.pageConfidences).toEqual([.64, .96]);
+    expect(summary).toEqual({
+      textAvailable: true, confidence: .64, requiresReview: true, failedPageCount: 0, error: undefined,
+      ocrStatus: 'needs_review', textExtractionStatus: 'needs_review', processingStatus: 'Requires Verification',
+    });
+
+    const repeated = mergePdfOcrResults(merged, 2, [{ page: 2, text: 'replacement text', confidence: .96, engine: 'tesseract-local', timestamp: 'again', status: 'succeeded' }]);
+    expect(summarizeMergedPdfOcrState(repeated)).toEqual(summary);
+  });
+
+  it('clears replaced unreadable-page warnings and finalizes only a fully clean merged OCR state', () => {
+    const prior = {
+      documentId: 'DOC-OCR-CLEAN', text: 'old', pageTexts: ['selectable text', ''], pageCount: 2, updatedAt: 'before',
+      parser: 'pdfjs' as const, warnings: ['1 page(s) contained no selectable text and may require OCR.'],
+      pageConfidences: [undefined, undefined], pageEngines: ['pdfjs', 'pdfjs'],
+    };
+    const merged = mergePdfOcrResults(prior, 2, [{ page: 2, text: 'complete replacement', confidence: .95, engine: 'tesseract-local', timestamp: 'later', status: 'succeeded' }]);
+    expect(merged.warnings).toEqual([]);
+    expect(summarizeMergedPdfOcrState(merged, .95)).toMatchObject({
+      requiresReview: false, ocrStatus: 'succeeded', textExtractionStatus: 'succeeded', processingStatus: 'Requires Verification',
+    });
   });
 
   it('preserves OCR pages and provenance across repeated mixed-PDF rereads', () => {
