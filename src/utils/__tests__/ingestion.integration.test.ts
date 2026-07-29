@@ -3,10 +3,11 @@ import 'fake-indexeddb/auto';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../documentIngestion';
-import { extractPdfText } from '../pdfTextExtractor';
+import { extractPdfText, reconstructPdfPageText } from '../pdfTextExtractor';
 import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../pdfPageOcr';
 import * as localOcr from '../localOcr';
-import { buildSpreadsheetRowCandidates } from '../spreadsheetCandidates';
+import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows } from '../spreadsheetCandidates';
+import { extractTransactionCandidates } from '../transactionExtractor';
 import { getUploadedFile, saveUploadedFile } from '../fileStorage';
 import { DOMParser } from '@xmldom/xmldom';
 
@@ -17,6 +18,16 @@ const makeTextPdf = async () => {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const first = pdf.addPage(); first.drawText('Synthetic statement page one', { x: 50, y: 700, font });
   const second = pdf.addPage(); second.drawText('Synthetic statement page two', { x: 50, y: 700, font });
+  return new Blob([new Uint8Array(await pdf.save())], { type: 'application/pdf' });
+};
+
+const makeTransactionPdf = async () => {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage();
+  page.drawText('01/02 Coffee', { x: 50, y: 700, font });
+  page.drawText('Shop 10.00', { x: 145, y: 700, font });
+  page.drawText('01/03 Grocery Market 20.00', { x: 50, y: 680, font });
   return new Blob([new Uint8Array(await pdf.save())], { type: 'application/pdf' });
 };
 
@@ -50,6 +61,33 @@ describe('real ingestion interfaces', () => {
     expect(result.pageMappingApproximate).toBe(false);
   });
 
+  it('preserves searchable-PDF rows while joining fragments on the same visual line', async () => {
+    const metadataText = reconstructPdfPageText([
+      { str: '01/02 Coffee', transform: [1, 0, 0, 1, 50, 700], height: 10 },
+      { str: 'Shop   10.00', transform: [1, 0, 0, 1, 145, 700], height: 10, hasEOL: true },
+      { str: '01/03 Grocery Market 20.00', transform: [1, 0, 0, 1, 50, 680], height: 10 },
+    ]);
+    expect(metadataText).toBe('01/02 Coffee Shop 10.00\n01/03 Grocery Market 20.00');
+    expect(reconstructPdfPageText([
+      { str: '01/02 Coffee', transform: [1, 0, 0, 1, 50, 700], height: 10 },
+      { str: 'Shop   10.00', transform: [1, 0, 0, 1, 145, 700], height: 10, hasEOL: true },
+      { str: '01/03 Grocery Market 20.00', transform: [1, 0, 0, 1, 50, 680], height: 10 },
+    ])).toBe(metadataText);
+
+    const result = await extractPdfText(await makeTransactionPdf());
+    expect(result.pageTexts).toEqual(['01/02 Coffee Shop 10.00\n01/03 Grocery Market 20.00']);
+    expect(result.pageMappingApproximate).toBe(false);
+    const candidates = extractTransactionCandidates(result.text, 'DOC-PDF', result.pageTexts, {
+      documentType: 'Checking Statement',
+      statementPeriod: '12/15/2025 - 01/15/2026',
+    });
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map(candidate => [candidate.rawDescription, candidate.amount])).toEqual([
+      ['Coffee Shop', 10],
+      ['Grocery Market', 20],
+    ]);
+  });
+
   it('routes and extracts DOCX paragraphs in order', async () => {
     const result = await ingestDocument(await makeDocx());
     expect(result.kind).toBe('docx');
@@ -65,6 +103,42 @@ describe('real ingestion interfaces', () => {
     expect(result.status).toBe('needs_review');
     expect(officeIngestionDocumentUpdates(result)).toMatchObject({ text_read: true, extracted_text_available: true, text_source: 'xlsx', text_parser: 'xlsx', text_extraction_status: 'needs_review' });
     expect(buildSpreadsheetRowCandidates('DOC-XLSX', 'Checking 0000', sheets['Checking 0000'], 1)[0]).toMatchObject({ documentId: 'DOC-XLSX', sheetName: 'Checking 0000', sourceRow: 2, headerRow: 1, verificationStatus: 'needs_review' });
+  });
+
+  it('uses only the persisted XLSX sheet and header selection for transaction candidates', () => {
+    const sheets = {
+      Transactions: [
+        ['Synthetic statement title'],
+        ['Date', 'Description', 'Amount'],
+        ['2026-01-02', 'Coffee Shop', '10.00'],
+        ['2026-01-03', 'Grocery Market', '20.00'],
+      ],
+      Notes: [
+        ['Date', 'Description', 'Amount'],
+        ['2026-01-04', 'Must not import', '999.00'],
+      ],
+    };
+    const selected = selectedWorkbookRows('DOC-XLSX', { sheets, selection: { sheetName: 'Transactions', headerRow: 2 } })!;
+    expect(selected.map(row => row.sourceRow)).toEqual([3, 4]);
+    const transactions = extractSelectedWorkbookTransactions(selected, {
+      documentType: 'Checking Statement',
+      statementPeriod: '12/15/2025 - 01/15/2026',
+    });
+    expect(transactions.map(candidate => [candidate.rawDescription, candidate.sourceSheet, candidate.sourceRow])).toEqual([
+      ['Coffee Shop', 'Transactions', 3],
+      ['Grocery Market', 'Transactions', 4],
+    ]);
+    expect(transactions.every(candidate => candidate.verificationStatus === 'needs_review' && candidate.needsReview)).toBe(true);
+
+    const notes = extractSelectedWorkbookTransactions(selectedWorkbookRows('DOC-XLSX', { sheets, selection: { sheetName: 'Notes', headerRow: 1 } })!, {
+      documentType: 'Checking Statement',
+      statementPeriod: '12/15/2025 - 01/15/2026',
+    });
+    expect(notes.map(candidate => candidate.rawDescription)).toEqual(['Must not import']);
+
+    const laterHeader = selectedWorkbookRows('DOC-XLSX', { sheets, selection: { sheetName: 'Transactions', headerRow: 3 } })!;
+    expect(laterHeader.map(row => row.sourceRow)).toEqual([4]);
+    expect(selectedWorkbookRows('DOC-XLSX', sheets)).toBeUndefined();
   });
 
   it.each([

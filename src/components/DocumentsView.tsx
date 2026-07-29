@@ -26,7 +26,7 @@ import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
 import { getActiveWorkspaceId } from '../utils/persistence';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
 import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
-import { buildSpreadsheetRowCandidates, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
+import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
 import { extractLegalCandidates, type LegalCandidate } from '../utils/legalDocumentExtractor';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
@@ -1200,17 +1200,21 @@ export default function DocumentsView({
   const extractTransactionsForSelectedDocument = async (doc: DocumentRecord) => {
     const stored = await getExtractedText(doc.id).catch(() => undefined);
     const text = stored?.text || extractedText;
-    if (!text.trim()) {
+    const selectedAccount = accounts.find(a => a.id === doc.account_id);
+    const workbookRows = doc.text_parser === 'xlsx' || doc.text_source === 'xlsx' ? selectedWorkbookRows(doc.id, stored?.structuredData) : undefined;
+    if (workbookRows === undefined && !text.trim()) {
       setErrorNotification('Read PDF text before extracting transactions.');
       return;
     }
-    const selectedAccount = accounts.find(a => a.id === doc.account_id);
-    const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
+    const extractionContext = {
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
-      sourcePagesApproximate: sourcePagesAreApproximate(stored?.pageMappingApproximate, doc.page_mapping_approximate),
       statementPeriod: doc.statement_period,
-    });
+    };
+    // Legacy XLSX records without structured selection retain the prior flattened-text fallback.
+    const candidates = workbookRows === undefined
+      ? extractTransactionCandidates(text, doc.id, stored?.pageTexts, { ...extractionContext, sourcePagesApproximate: sourcePagesAreApproximate(stored?.pageMappingApproximate, doc.page_mapping_approximate) })
+      : extractSelectedWorkbookTransactions(workbookRows, extractionContext);
     setReviewRowsOpen(true);
     const ocrCandidates = doc.text_source === 'ocr' ? candidates.map(c => ({ ...c, source: 'OCR' as const, needsReview: true, confidenceScore: Math.min(c.confidenceScore, doc.ocr_confidence || 0.6), reviewReason: c.reviewReason || 'OCR source must be reviewed before import', note: [c.note, 'source: OCR'].filter(Boolean).join('; ') })) : candidates;
     setTransactionCandidates(ocrCandidates);
@@ -1248,6 +1252,8 @@ export default function DocumentsView({
       source_page: c.sourcePage,
       source_page_approximate: c.sourcePageApproximate,
       source_line: c.sourceLine,
+      source_sheet: c.sourceSheet,
+      source_row: c.sourceRow,
       source_excerpt: c.sourceExcerpt,
       extraction_engine: c.extractionEngine,
       extraction_timestamp: c.extractionTimestamp,

@@ -138,6 +138,8 @@ export interface Transaction {
   source_page?: number;
   source_page_approximate?: boolean;
   source_line?: number;
+  source_sheet?: string;
+  source_row?: number;
   source_excerpt?: string;
   extraction_engine?: string;
   extraction_timestamp?: string;

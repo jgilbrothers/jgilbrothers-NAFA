@@ -13,6 +13,8 @@ export interface TransactionCandidate {
   sourcePage?: number;
   sourcePageApproximate?: boolean;
   sourceLine?: number;
+  sourceSheet?: string;
+  sourceRow?: number;
   confidenceScore: number;
   needsReview: boolean;
   reviewReason?: string;

@@ -16,6 +16,47 @@ export interface PdfTextExtractionResult {
 
 const NO_TEXT = 'PDF.js found no selectable text. The PDF may be scanned or image-based; run local OCR.';
 
+interface PdfTextFragment {
+  str: string;
+  hasEOL?: boolean;
+  transform?: number[];
+  height?: number;
+}
+
+/** Preserve visual rows while joining fragments that PDF.js reports on the same line. */
+export function reconstructPdfPageText(items: unknown[]): string {
+  const lines: string[] = [];
+  let fragments: string[] = [];
+  let previousY: number | undefined;
+  let previousHeight = 0;
+  const flush = () => {
+    const line = fragments.join(' ').replace(/[ \t]+/g, ' ').trim();
+    if (line) lines.push(line);
+    fragments = [];
+    previousY = undefined;
+    previousHeight = 0;
+  };
+
+  for (const value of items) {
+    if (!value || typeof value !== 'object' || !('str' in value)) continue;
+    const item = value as PdfTextFragment;
+    const y = Array.isArray(item.transform) && Number.isFinite(item.transform[5]) ? item.transform[5] : undefined;
+    const height = Number.isFinite(item.height) ? Math.abs(item.height || 0) : 0;
+    const rowTolerance = Math.max(2, Math.min(previousHeight || height || 4, height || previousHeight || 4) * 0.5);
+    if (fragments.length && previousY !== undefined && y !== undefined && Math.abs(y - previousY) > rowTolerance) flush();
+
+    const fragment = item.str.replace(/[ \t]+/g, ' ').trim();
+    if (fragment) fragments.push(fragment);
+    if (item.hasEOL) flush();
+    else if (y !== undefined) {
+      previousY = y;
+      previousHeight = height || previousHeight;
+    }
+  }
+  flush();
+  return lines.join('\n');
+}
+
 /** Extracts selectable text page-by-page. Page array indexes always map to PDF page numbers. */
 export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResult> {
   try {
@@ -29,11 +70,7 @@ export async function extractPdfText(blob: Blob): Promise<PdfTextExtractionResul
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
       const page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();
-      const text = content.items
-        .map(item => ('str' in item ? item.str : ''))
-        .join(' ')
-        .replace(/[ \t]+/g, ' ')
-        .trim();
+      const text = reconstructPdfPageText(content.items);
       pageTexts.push(text);
       page.cleanup();
     }
