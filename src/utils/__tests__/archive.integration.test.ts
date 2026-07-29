@@ -191,7 +191,7 @@ describe('complete project archive lifecycle', () => {
   it('remaps document IDs inside plain-object candidate collections', async () => {
     const state = workspace('ROUNDTRIP');
     await saveUploadedFile('DOC-ROUNDTRIP', new File(['source'], 'synthetic.txt'));
-    await saveExtractedText({ documentId: 'DOC-ROUNDTRIP', text: 'candidate', pageTexts: ['candidate'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z', structuredData: { candidates: [{ id: 'TX-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', row: 2 }], legalCandidates: [{ id: 'LEGAL-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', kind: 'allegation' }] } });
+    await saveExtractedText({ documentId: 'DOC-ROUNDTRIP', text: 'candidate', pageTexts: ['candidate'], pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z', structuredData: { candidates: [{ id: 'TX-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', row: 2 }], legalCandidates: [{ id: 'LEGAL-CANDIDATE-1', documentId: 'DOC-ROUNDTRIP', kind: 'allegation', field: 'allegation', value: 'Synthetic allegation', sourceExcerpt: 'Synthetic allegation', confidence: 0.65, verificationStatus: 'needs_review' }] } });
     await restoreProjectArchive(await exportProjectArchive('ROUNDTRIP', state), { 'DOC-ROUNDTRIP': 'DOC-OBJECT-COPY' });
     expect((await getExtractedText('DOC-OBJECT-COPY'))?.structuredData).toMatchObject({ candidates: [{ documentId: 'DOC-OBJECT-COPY' }], legalCandidates: [{ documentId: 'DOC-OBJECT-COPY' }] });
   });
@@ -228,6 +228,90 @@ describe('complete project archive lifecycle', () => {
       getFile: async () => undefined,
       getText: async () => undefined,
     }, async () => { throw new Error('synthetic final verification failure'); })).rejects.toThrow(/self-verification failed.*synthetic final verification failure/i);
+  });
+
+  it('preserves historical transaction provenance after its source document is deleted', async () => {
+    const deletedDocumentId = 'DOC-DELETED-SOURCE';
+    const state = workspace('DELETED-SOURCE');
+    await saveUploadedFile(deletedDocumentId, new File(['deleted synthetic source'], 'deleted-source.txt'));
+    await saveExtractedText({
+      documentId: deletedDocumentId, text: 'deleted synthetic text', pageTexts: ['deleted synthetic text'],
+      pageCount: 1, updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    await clearStoredFiles();
+    await deleteExtractedText(deletedDocumentId);
+    state.documents = [];
+    state.transactions = [{
+      transaction_id: 'TX-HISTORICAL', transaction_date: '2026-01-02', raw_description: 'Synthetic historical row',
+      clean_vendor_name: 'Synthetic historical row', amount: 25, transaction_type: 'debit', processing_method: 'Other',
+      card_or_account_suffix: '0000', category: 'Miscellaneous', is_pending: false,
+      verification_status: 'confirmed', source_document_id: deletedDocumentId,
+    }];
+
+    const archive = await exportProjectArchive('DELETED-SOURCE', state);
+    const inspected = await inspectProjectArchive(archive);
+    expect(inspected.workspace.documents).toEqual([]);
+    expect(inspected.workspace.transactions[0].source_document_id).toBe(deletedDocumentId);
+    expect(inspected.manifest.files).toEqual([]);
+    expect(inspected.manifest.artifacts.some(item => item.path.includes(deletedDocumentId))).toBe(false);
+
+    const memory = validationMemoryStorage();
+    const restored = await restoreProjectArchive(archive, {}, memory.storage);
+    expect(restored.documents).toEqual([]);
+    expect(restored.transactions[0].source_document_id).toBe(deletedDocumentId);
+    expect(memory.files.size).toBe(0);
+    expect(memory.texts.size).toBe(0);
+  });
+
+  it('accepts complete legal candidates and rejects malformed runtime shapes before persistence', async () => {
+    const state = workspace('LEGAL-SHAPE');
+    state.documents[0] = {
+      ...state.documents[0],
+      source_file_status: 'unavailable',
+      local_file: { storage: 'indexeddb', stored: false },
+      extracted_text_available: true,
+      extracted_text_id: state.documents[0].id,
+    };
+    const validCandidate = {
+      id: 'LEGAL-SHAPE-1', documentId: state.documents[0].id, kind: 'allegation', field: 'allegation',
+      value: 'Synthetic allegation', sourcePage: 1, sourceExcerpt: 'Synthetic allegation',
+      confidence: 0.65, verificationStatus: 'needs_review',
+    };
+    const storage: ArchiveExportStorage = {
+      getFile: async () => undefined,
+      getText: async documentId => ({
+        documentId, text: 'Synthetic allegation', pageTexts: ['Synthetic allegation'], pageCount: 1,
+        updatedAt: '2026-01-01T00:00:00.000Z', structuredData: { legalCandidates: [validCandidate] },
+      }),
+    };
+    const archive = await exportProjectArchive('LEGAL-SHAPE', state, undefined, storage);
+    const validMemory = validationMemoryStorage();
+    await restoreProjectArchive(archive, {}, validMemory.storage);
+    expect(validMemory.texts.get(state.documents[0].id).structuredData.legalCandidates).toEqual([validCandidate]);
+
+    const mutations: Array<[string, (candidate: any) => void]> = [
+      ['object kind', candidate => { candidate.kind = {}; }],
+      ['missing field', candidate => { delete candidate.field; }],
+      ['missing value', candidate => { delete candidate.value; }],
+      ['missing source excerpt', candidate => { delete candidate.sourceExcerpt; }],
+      ['missing verification status', candidate => { delete candidate.verificationStatus; }],
+      ['invalid confidence', candidate => { candidate.confidence = 1.5; }],
+      ['invalid kind enum', candidate => { candidate.kind = 'opinion'; }],
+      ['array string field', candidate => { candidate.field = ['allegation']; }],
+      ['unsafe nested key', candidate => { candidate.extra = JSON.parse('{"__proto__":{"polluted":true}}'); }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+        const path = `extracted-text/${state.documents[0].id}.json`;
+        const parsed = JSON.parse(await zip.file(path)!.async('text'));
+        mutate(parsed.structuredData.legalCandidates[0]);
+        await replaceArtifact(zip, manifest, path, JSON.stringify(parsed));
+      });
+      const memory = validationMemoryStorage();
+      await expect(restoreProjectArchive(malformed, {}, memory.storage), label).rejects.toThrow(/(?:legalCandidates\[0\].*malformed|prohibited key)/);
+      expect(memory.files.size).toBe(0);
+      expect(memory.texts.size).toBe(0);
+    }
   });
 
   it.each([null, 'workspace', 42, [], {}, { documents: [], transactions: [] }, { ...workspace('BAD'), documents: {} }])('rejects malformed workspace JSON: %j', async malformed => {
@@ -397,7 +481,7 @@ describe('complete project archive lifecycle', () => {
     await expect(exportProjectArchive('DUPLICATE-CANDIDATE', state, undefined, storage)).rejects.toThrow(/candidates contains duplicate id CANDIDATE-1/);
   });
 
-  it('rejects dangling operational references while preserving valid historical display identifiers', async () => {
+  it('rejects dangling live operational references while preserving historical identifiers', async () => {
     const state = workspace('REFERENCES');
     state.accounts = [{ id: 'ACC-1', account_name: 'Synthetic', account_suffix: '0000', account_type: 'checking', institution_name: '', current_balance: 0, available_balance: 0, statement_period: 'Current', account_status: 'Active' }];
     state.documents[0] = { ...state.documents[0], account_id: 'ACC-1', source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
@@ -415,7 +499,6 @@ describe('complete project archive lifecycle', () => {
     const archive = await exportProjectArchive('REFERENCES', state);
     for (const [label, mutate] of [
       ['document account', (parsed: any) => { parsed.documents[0].account_id = 'ACC-MISSING'; }],
-      ['transaction document', (parsed: any) => { parsed.transactions[0].source_document_id = 'DOC-MISSING'; }],
       ['reconciliation transaction', (parsed: any) => { parsed.reconItems[0].transactionA.transaction_id = 'TX-MISSING'; }],
       ['audit account', (parsed: any) => { parsed.auditLogs[0].account_id = 'ACC-MISSING'; }],
     ] as const) {

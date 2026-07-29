@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { findDuplicateHash, sha256 } from '../fileIntegrity';
 import { routeDocument } from '../documentIngestion';
 import { extractTransactionCandidates, sourcePagesAreApproximate } from '../transactionExtractor';
-import { extractLegalCandidates } from '../legalDocumentExtractor';
+import { extractLegalCandidates, parseLegalCandidate } from '../legalDocumentExtractor';
 import { isVerifiedTransaction, migrateLegacyTransactions, verifiedTransactionsOnly } from '../verifiedTransactions';
 import type { Transaction } from '../../types';
 import { calculateAggregates } from '../dataEngine';
@@ -132,6 +132,21 @@ describe('traceability and confirmation gating', () => {
 });
 
 describe('legal candidate separation', () => {
+  it('parses only the complete runtime-safe LegalCandidate shape', () => {
+    const valid = {
+      id: 'LEGAL-VALID', documentId: 'DOC-LEGAL', kind: 'finding', field: 'finding',
+      value: 'Synthetic finding', sourcePage: 2, sourceExcerpt: 'Synthetic finding',
+      confidence: 0.8, verificationStatus: 'confirmed',
+    };
+    expect(parseLegalCandidate(valid)).toEqual(valid);
+    expect(parseLegalCandidate({ ...valid, kind: {} })).toBeUndefined();
+    expect(parseLegalCandidate({ ...valid, field: ['finding'] })).toBeUndefined();
+    expect(parseLegalCandidate({ ...valid, confidence: Number.NaN })).toBeUndefined();
+    expect(parseLegalCandidate({ ...valid, sourcePage: 0 })).toBeUndefined();
+    expect(parseLegalCandidate({ ...valid, verificationStatus: 'verified' })).toBeUndefined();
+    expect(parseLegalCandidate({ ...valid, unexpected: { nested: true } })).toBeUndefined();
+  });
+
   it('never converts an allegation into a finding', () => {
     const candidates = extractLegalCandidates('LEGAL-1', ['Petitioner alleges funds were hidden. The court finds the account existed. It is ordered that records shall be produced.']);
     expect(candidates.map(candidate => candidate.kind)).toEqual(expect.arrayContaining(['allegation', 'finding', 'order']));

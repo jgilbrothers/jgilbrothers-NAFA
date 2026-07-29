@@ -27,7 +27,7 @@ import { getActiveWorkspaceId } from '../utils/persistence';
 import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
 import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
 import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
-import { extractLegalCandidates, type LegalCandidate } from '../utils/legalDocumentExtractor';
+import { extractLegalCandidates, parseLegalCandidate, type LegalCandidate } from '../utils/legalDocumentExtractor';
 import { isVerifiedTransaction } from '../utils/verifiedTransactions';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
@@ -962,7 +962,12 @@ export default function DocumentsView({
           setWorkbookHeaderRow(selection?.headerRow || 1);
           setWorkbookCandidates(structured && 'candidates' in structured ? structured.candidates || [] : []);
         }
-        if (structured && 'legalCandidates' in structured && Array.isArray(structured.legalCandidates)) setLegalCandidates(structured.legalCandidates as LegalCandidate[]);
+        if (structured && 'legalCandidates' in structured && Array.isArray(structured.legalCandidates)) {
+          setLegalCandidates(structured.legalCandidates.flatMap((candidate: unknown) => {
+            const parsed = parseLegalCandidate(candidate);
+            return parsed ? [parsed] : [];
+          }));
+        }
       }
     }).catch(console.error);
 

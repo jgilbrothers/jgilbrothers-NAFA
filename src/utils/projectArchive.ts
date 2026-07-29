@@ -4,6 +4,7 @@ import { deleteExtractedText, getExtractedText, saveExtractedText, type StoredEx
 import { sha256 } from './fileIntegrity';
 import { migrateLegacyTransactions } from './verifiedTransactions';
 import { validateSavedReportSessions } from './reportSessions';
+import { parseLegalCandidate } from './legalDocumentExtractor';
 
 export const ARCHIVE_SCHEMA_VERSION = 'nafa-archive-v2';
 export const ARCHIVE_LIMITS = Object.freeze({
@@ -196,6 +197,7 @@ const validateTransactionMember = (value: unknown, label: string): void => {
   if (item.verification_status !== undefined) requireEnum(item.verification_status, ['extracted', 'needs_review', 'confirmed', 'corrected', 'excluded', 'disputed'], `${label}.verification_status`);
   if (item.duplicate_status !== undefined) requireEnum(item.duplicate_status, ['possible_duplicate', 'confirmed_duplicate', 'not_duplicate'], `${label}.duplicate_status`);
   if (item.transfer_status !== undefined) requireEnum(item.transfer_status, ['possible_transfer', 'confirmed_transfer', 'not_transfer'], `${label}.transfer_status`);
+  if (item.source_document_id !== undefined) requireString(item.source_document_id, `${label}.source_document_id`);
   requireNumber(item.amount, `${label}.amount`);
   requireBoolean(item.is_pending, `${label}.is_pending`);
   if (item.running_balance !== undefined) requireNumber(item.running_balance, `${label}.running_balance`);
@@ -282,10 +284,6 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
     const accountId = (value as Record<string, unknown>).account_id;
     if (accountId !== undefined && (typeof accountId !== 'string' || !accountIds.has(accountId))) throw new Error(`Archive workspace data is invalid: documents[${index}].account_id references a missing account.`);
   });
-  transactions.forEach((value, index) => {
-    const documentId = (value as Record<string, unknown>).source_document_id;
-    if (documentId !== undefined && (typeof documentId !== 'string' || !documentIds.has(documentId))) throw new Error(`Archive workspace data is invalid: transactions[${index}].source_document_id references a missing document.`);
-  });
   reconItems.forEach((value, index) => {
     const item = value as Record<string, any>;
     if (item.documentId !== undefined && (typeof item.documentId !== 'string' || !documentIds.has(item.documentId))) throw new Error(`Archive workspace data is invalid: reconItems[${index}].documentId references a missing document.`);
@@ -327,6 +325,7 @@ const validateExtractedText = (value: unknown, expectedDocumentId: string): Stor
       const ids = new Set<string>();
       collection.forEach((candidate: unknown, index: number) => {
         if (!isPlainObject(candidate) || typeof candidate.id !== 'string' || !candidate.id) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName}[${index}].id is invalid.`);
+        if (collectionName === 'legalCandidates' && !parseLegalCandidate(candidate)) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.legalCandidates[${index}] is incomplete or malformed.`);
         if (ids.has(candidate.id)) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName} contains duplicate id ${candidate.id}.`);
         ids.add(candidate.id);
         if (candidate.documentId !== expectedDocumentId) throw new Error(`Archive extracted text is invalid for document ${expectedDocumentId}: structuredData.${collectionName}[${index}] references a different document.`);
