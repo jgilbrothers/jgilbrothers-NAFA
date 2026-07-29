@@ -188,6 +188,58 @@ const requireUniqueIds = (values: unknown[], key: string, label: string): void =
     seen.add(item[key]);
   });
 };
+const requireOptionalString = (item: Record<string, unknown>, key: string, label: string): void => {
+  if (item[key] !== undefined) requireStringType(item[key], `${label}.${key}`);
+};
+const requireOptionalBoolean = (item: Record<string, unknown>, key: string, label: string): void => {
+  if (item[key] !== undefined) requireBoolean(item[key], `${label}.${key}`);
+};
+const requireOptionalCount = (item: Record<string, unknown>, key: string, label: string): void => {
+  if (item[key] !== undefined && (!Number.isSafeInteger(item[key]) || (item[key] as number) < 0)) {
+    throw new Error(`Archive workspace data is invalid: ${label}.${key} must be a non-negative safe integer.`);
+  }
+};
+
+const validateOptionalDocumentFields = (item: Record<string, any>, label: string): void => {
+  for (const key of [
+    'ocr_error', 'statement_period', 'statement_start_date', 'statement_end_date', 'statement_period_suggestion',
+    'user_notes', 'raw_text', 'extracted_date', 'extracted_merchant', 'original_file_name', 'mime_type',
+    'extraction_engine', 'extracted_text_preview', 'text_extraction_error',
+  ]) requireOptionalString(item, key, label);
+  for (const key of [
+    'ocr_text_available', 'type_detected', 'text_read', 'extracted_text_available',
+    'page_mapping_approximate', 'transactions_extracted',
+  ]) requireOptionalBoolean(item, key, label);
+  for (const key of ['ocr_read_at', 'extraction_timestamp', 'text_read_at']) {
+    if (item[key] !== undefined) requireTimestamp(item[key], `${label}.${key}`);
+  }
+  for (const key of ['page_count', 'transaction_candidate_count', 'confirmed_transaction_count', 'needs_review_transaction_count']) {
+    requireOptionalCount(item, key, label);
+  }
+  if (item.extracted_amount !== undefined) requireNumber(item.extracted_amount, `${label}.extracted_amount`);
+  if (item.file_size !== undefined && (!Number.isSafeInteger(item.file_size) || item.file_size < 0)) {
+    throw new Error(`Archive workspace data is invalid: ${label}.file_size must be a non-negative safe integer.`);
+  }
+  for (const key of ['account_id', 'project_id', 'extracted_text_id']) {
+    if (item[key] !== undefined) requireString(item[key], `${label}.${key}`);
+  }
+  if (item.extraction_warnings !== undefined && (!Array.isArray(item.extraction_warnings) || !item.extraction_warnings.every((warning: unknown) => typeof warning === 'string'))) {
+    throw new Error(`Archive workspace data is invalid: ${label}.extraction_warnings must be an array of strings.`);
+  }
+  if (item.local_file !== undefined) {
+    const localFile = requireObject(item.local_file, `${label}.local_file`);
+    if (Object.keys(localFile).some(key => !['storage', 'stored'].includes(key))) throw new Error(`Archive workspace data is invalid: ${label}.local_file contains an unsupported field.`);
+    requireEnum(localFile.storage, ['indexeddb'], `${label}.local_file.storage`);
+    requireBoolean(localFile.stored, `${label}.local_file.stored`);
+  }
+  if (item.ocr_engine !== undefined) requireEnum(item.ocr_engine, ['local', 'tesseract-local', 'tesseract-cdn'], `${label}.ocr_engine`);
+  if (item.text_source !== undefined) requireEnum(item.text_source, ['pdf', 'ocr', 'manual', 'csv', 'docx', 'xlsx'], `${label}.text_source`);
+  if (item.checksum_status !== undefined) requireEnum(item.checksum_status, ['pending', 'verified', 'failed'], `${label}.checksum_status`);
+  if (item.user_verification_status !== undefined) requireEnum(item.user_verification_status, ['unverified', 'verified', 'corrected', 'disputed'], `${label}.user_verification_status`);
+  if (item.source_file_status !== undefined) requireEnum(item.source_file_status, ['stored', 'unavailable', 'metadata_only'], `${label}.source_file_status`);
+  if (item.text_parser !== undefined) requireEnum(item.text_parser, ['pdfjs', 'lightweight-fallback', 'ocr', 'mammoth', 'xlsx'], `${label}.text_parser`);
+  if (item.text_extraction_status !== undefined) requireEnum(item.text_extraction_status, ['not_started', 'extracting', 'succeeded', 'failed', 'needs_review'], `${label}.text_extraction_status`);
+};
 
 const validateTransactionMember = (value: unknown, label: string): void => {
   const item = requireObject(value, label);
@@ -241,6 +293,7 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
     requireEnum(item.processing_status, ['Completed', 'Requires Classification', 'Requires Verification', 'Processing'], `documents[${index}].processing_status`);
     requireNumber(item.ocr_confidence, `documents[${index}].ocr_confidence`);
     if (item.sha256 !== undefined && (typeof item.sha256 !== 'string' || !SHA256_PATTERN.test(item.sha256))) throw new Error(`Archive workspace data is invalid: documents[${index}].sha256 must be a 64-character hexadecimal digest.`);
+    validateOptionalDocumentFields(item, `documents[${index}]`);
   });
   accounts.forEach((value, index) => {
     const item = requireObject(value, `accounts[${index}]`);
@@ -393,6 +446,7 @@ export async function exportProjectArchive(
       if (file.blob.size > ARCHIVE_LIMITS.maxSourceFileBytes) throw new Error(`Source file ${file.originalFileName} exceeds the archive size limit.`);
       if (file.size !== file.blob.size) throw new Error(`Complete archive stopped: retained source-file size metadata is inconsistent for document ${document.id}.`);
       const checksum = await sha256(file.blob);
+      if (document.sha256 && document.sha256.toLowerCase() !== checksum) throw new Error(`Complete archive stopped: retained source checksum disagrees with stored bytes for document ${document.id}.`);
       validateMetadata({ ...file, size: file.blob.size, sha256: checksum }, document.id, checksum);
       const path = `source-files/${file.documentId}/content/${encodeURIComponent(file.originalFileName)}`;
       validateArchivePath(path, 'source file');

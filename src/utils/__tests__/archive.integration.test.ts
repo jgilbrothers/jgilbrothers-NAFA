@@ -347,6 +347,81 @@ describe('complete project archive lifecycle', () => {
     expect(memory.texts.size).toBe(0);
   });
 
+  it('round-trips the complete optional DocumentRecord shape and rejects incompatible optional values before persistence', async () => {
+    const state = workspace('DOCUMENT-OPTIONALS');
+    state.accounts = [{
+      id: 'ACC-DOCUMENT-OPTIONALS', account_name: 'Synthetic', account_suffix: '0000', account_type: 'checking',
+      institution_name: '', current_balance: 0, available_balance: 0, statement_period: 'Current', account_status: 'Active',
+    }];
+    state.documents[0] = {
+      ...state.documents[0],
+      ocr_text_available: true,
+      ocr_read_at: '2026-01-02T00:00:00.000Z',
+      ocr_error: '',
+      ocr_engine: 'local',
+      text_source: 'manual',
+      account_id: state.accounts[0].id,
+      statement_period: '',
+      statement_start_date: '',
+      statement_end_date: '',
+      statement_period_suggestion: '',
+      user_notes: '',
+      raw_text: '',
+      extracted_amount: 0,
+      extracted_date: '1/2/2026',
+      extracted_merchant: '',
+      original_file_name: '',
+      mime_type: '',
+      file_size: 0,
+      project_id: 'PROJECT-DOCUMENT-OPTIONALS',
+      checksum_status: 'pending',
+      extraction_engine: '',
+      extraction_timestamp: '2026-01-02T00:00:00.000Z',
+      extraction_warnings: [],
+      user_verification_status: 'unverified',
+      local_file: { storage: 'indexeddb', stored: false },
+      source_file_status: 'unavailable',
+      type_detected: false,
+      text_read: false,
+      text_read_at: '2026-01-02T00:00:00.000Z',
+      extracted_text_available: false,
+      extracted_text_preview: '',
+      page_count: 0,
+      text_parser: 'pdfjs',
+      page_mapping_approximate: false,
+      text_extraction_status: 'not_started',
+      text_extraction_error: '',
+      transactions_extracted: false,
+      transaction_candidate_count: 0,
+      confirmed_transaction_count: 0,
+      needs_review_transaction_count: 0,
+    };
+    const archive = await exportProjectArchive('DOCUMENT-OPTIONALS', state);
+    expect((await restoreProjectArchive(archive)).documents[0]).toEqual(state.documents[0]);
+
+    const mutations: Array<[string, (document: any) => void]> = [
+      ['object instead of warning array', document => { document.extraction_warnings = {}; }],
+      ['invalid warning array member', document => { document.extraction_warnings = [7]; }],
+      ['array instead of string', document => { document.statement_period = []; }],
+      ['invalid enum', document => { document.text_parser = 'cloud-parser'; }],
+      ['invalid boolean', document => { document.text_read = 'yes'; }],
+      ['invalid timestamp', document => { document.text_read_at = 'never'; }],
+      ['invalid nested object', document => { document.local_file = { storage: 'indexeddb', stored: 'yes' }; }],
+      ['invalid optional number', document => { document.page_count = -1; }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+        const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+        mutate(parsed.documents[0]);
+        await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+      });
+      const memory = validationMemoryStorage();
+      await expect(restoreProjectArchive(malformed, {}, memory.storage), label).rejects.toThrow(/Archive workspace data is invalid/);
+      expect(memory.files.size).toBe(0);
+      expect(memory.texts.size).toBe(0);
+    }
+  });
+
   it('rejects incomplete report metadata before archive artifacts can be persisted', async () => {
     const state = workspace('BAD-REPORT');
     state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
@@ -703,7 +778,7 @@ describe('metadata integrity and validation', () => {
     expect(await getUploadedFile('DOC-META-VALID')).toMatchObject({ documentId: 'DOC-META-VALID', originalFileName: 'synthetic-evidence.txt', mimeType: 'text/plain', size: 25 });
   });
 
-  it('accepts matching or absent workspace digests and rejects contradictions before writes', async () => {
+  it('accepts matching or absent workspace digests and refuses checksum drift before export', async () => {
     const source = new File(['synthetic digest source'], 'digest.txt', { type: 'text/plain' });
     const actualDigest = await sha256(source);
 
@@ -725,10 +800,9 @@ describe('metadata integrity and validation', () => {
     contradictory.documents[0].sha256 = 'f'.repeat(64);
     contradictory.documents[0].checksum_status = 'verified';
     await saveUploadedFile('DOC-DIGEST-MISMATCH', source);
-    const mismatchMemory = validationMemoryStorage();
-    await expect(restoreProjectArchive(await exportProjectArchive('DIGEST-MISMATCH', contradictory), {}, mismatchMemory.storage)).rejects.toThrow(/workspace source checksum disagrees/);
-    expect(mismatchMemory.files.size).toBe(0);
-    expect(mismatchMemory.texts.size).toBe(0);
+    const before = structuredClone(contradictory);
+    await expect(exportProjectArchive('DIGEST-MISMATCH', contradictory)).rejects.toThrow(/retained source checksum disagrees with stored bytes.*DOC-DIGEST-MISMATCH/i);
+    expect(contradictory).toEqual(before);
   });
 
   it('rejects an unreasonable compression ratio before parsing metadata', async () => {
