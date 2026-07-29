@@ -3,10 +3,11 @@ import { commitRestoredArchive, type ArchiveImportCommitDependencies } from '../
 import { reportSessionsKey } from '../reportSessions';
 import type { WorkspaceState } from '../persistence';
 
+const reportSession = () => ({ id: 'REPORT-1', name: 'Synthetic report', timestamp: '2026-01-01T00:00:00.000Z', caseTitle: 'Synthetic', caseNumber: 'SYN-1', clientName: 'Synthetic', jurisdiction: 'North Carolina', reportType: 'itemized_ledger', selectedAccounts: [], selectedCategories: [], startDate: '', endDate: '', excludeDuplicates: true, excludeTransfers: true, excludeUnresolved: false, includeCharts: true, includeNarratives: true, appendixMode: 'condensed' as const });
 const workspace = (): WorkspaceState => ({
   accounts: [], transactions: [], rules: [], reconItems: [], auditLogs: [], chatLog: [], jurisdiction: 'North Carolina',
   documents: [{ id: 'DOC-IMPORT-1', filename: 'synthetic.txt', upload_timestamp: '2026-01-01T00:00:00.000Z', file_type: 'Other', ocr_status: 'not_started', ocr_confidence: 0, institution_name: '', processing_status: 'Requires Verification' }],
-  reportMetadata: [{ id: 'REPORT-1', name: 'Synthetic report' }],
+  reportMetadata: [reportSession()],
 });
 
 const memoryStorage = () => {

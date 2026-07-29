@@ -229,6 +229,31 @@ describe('complete project archive lifecycle', () => {
     expect(memory.texts.size).toBe(0);
   });
 
+  it('rejects incomplete report metadata before archive artifacts can be persisted', async () => {
+    const state = workspace('BAD-REPORT');
+    state.documents[0] = { ...state.documents[0], source_file_status: 'unavailable', local_file: { storage: 'indexeddb', stored: false } };
+    const validSession = {
+      id: 'REPORT-VALID', name: 'Synthetic report', timestamp: '2026-01-01T00:00:00.000Z',
+      caseTitle: 'Synthetic', caseNumber: 'SYN-1', clientName: 'Synthetic', jurisdiction: 'North Carolina',
+      reportType: 'itemized_ledger', selectedAccounts: [], selectedCategories: [], startDate: '', endDate: '',
+      excludeDuplicates: true, excludeTransfers: true, excludeUnresolved: false,
+      includeCharts: true, includeNarratives: true, appendixMode: 'condensed',
+    };
+    state.reportMetadata = [validSession];
+    const archive = await exportProjectArchive('BAD-REPORT', state);
+    expect((await inspectProjectArchive(archive)).workspace.reportMetadata).toEqual([validSession]);
+
+    const malformed = await rewriteArchive(archive, async (zip, manifest) => {
+      const parsed = JSON.parse(await zip.file('workspace.json')!.async('text'));
+      parsed.reportMetadata = [{ id: 'REPORT-ID-ONLY' }];
+      await replaceArtifact(zip, manifest, 'workspace.json', JSON.stringify(parsed));
+    });
+    const memory = validationMemoryStorage();
+    await expect(restoreProjectArchive(malformed, {}, memory.storage)).rejects.toThrow(/reportMetadata\[0\] is incomplete or malformed/);
+    expect(memory.files.size).toBe(0);
+    expect(memory.texts.size).toBe(0);
+  });
+
   it('stops when a document claims retained source bytes that are missing', async () => {
     await expect(exportProjectArchive('MISSING', workspace('MISSING'))).rejects.toThrow(/claims a retained source file/);
   });

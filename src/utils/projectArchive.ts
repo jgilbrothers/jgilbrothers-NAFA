@@ -3,6 +3,7 @@ import { deleteUploadedFile, getUploadedFile, restoreUploadedFile, type StoredUp
 import { deleteExtractedText, getExtractedText, saveExtractedText, type StoredExtractedText } from './extractedTextStorage';
 import { sha256 } from './fileIntegrity';
 import { migrateLegacyTransactions } from './verifiedTransactions';
+import { validateSavedReportSessions } from './reportSessions';
 
 export const ARCHIVE_SCHEMA_VERSION = 'nafa-archive-v2';
 export const ARCHIVE_LIMITS = Object.freeze({
@@ -223,6 +224,7 @@ const validateWorkspaceState: (value: unknown) => asserts value is WorkspaceStat
     const item = requireObject(value, `chatLog[${index}]`);
     for (const key of ['id', 'sender', 'text', 'timestamp']) requireString(item[key], `chatLog[${index}].${key}`);
   });
+  if (root.reportMetadata !== undefined) validateSavedReportSessions(root.reportMetadata, 'Archive workspace data reportMetadata');
 };
 
 const validateMetadata = (value: unknown, expectedDocumentId: string, expectedSha256: string): Omit<StoredUploadedFile, 'blob'> => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { LEGACY_REPORT_OWNER_KEY, LEGACY_REPORT_SESSIONS_KEY, reportSessionsKey, resolveReportSessions, writeReportSessions, type SavedReportSession } from '../reportSessions';
+import { LEGACY_REPORT_OWNER_KEY, LEGACY_REPORT_SESSIONS_KEY, parseSavedReportSession, reportSessionsKey, resolveReportSessions, validateSavedReportSessions, writeReportSessions, type SavedReportSession } from '../reportSessions';
 import { exportProjectArchive, inspectProjectArchive } from '../projectArchive';
 import type { WorkspaceState } from '../persistence';
 
@@ -30,6 +30,7 @@ describe('workspace report-session compatibility', () => {
     expect(resolveReportSessions('WS-1', storage)).toEqual([session('LEGACY')]);
     expect(storage.getItem(LEGACY_REPORT_OWNER_KEY)).toBe('WS-1');
     expect(JSON.parse(storage.getItem(reportSessionsKey('WS-1'))!)).toEqual([session('LEGACY')]);
+    expect(storage.getItem(LEGACY_REPORT_SESSIONS_KEY)).toBeNull();
   });
 
   it('places the visible legacy-only collection into a complete archive', async () => {
@@ -38,12 +39,15 @@ describe('workspace report-session compatibility', () => {
     expect((await inspectProjectArchive(await exportProjectArchive('WS-1', state))).workspace.reportMetadata).toEqual([session('LEGACY-EXPORT')]);
   });
 
-  it('deduplicates mixed scoped and owned legacy sessions idempotently', () => {
+  it('treats scoped storage as authoritative after migration and never resurrects a deletion', () => {
     writeReportSessions('WS-1', [session('A'), session('B')], storage);
     storage.setItem(LEGACY_REPORT_SESSIONS_KEY, JSON.stringify([session('B'), session('C')]));
     storage.setItem(LEGACY_REPORT_OWNER_KEY, 'WS-1');
-    expect(resolveReportSessions('WS-1', storage).map(item => item.id)).toEqual(['A', 'B', 'C']);
-    expect(resolveReportSessions('WS-1', storage).map(item => item.id)).toEqual(['A', 'B', 'C']);
+    expect(resolveReportSessions('WS-1', storage).map(item => item.id)).toEqual(['A', 'B']);
+    expect(storage.getItem(LEGACY_REPORT_SESSIONS_KEY)).toBeNull();
+    writeReportSessions('WS-1', [session('B')], storage);
+    expect(resolveReportSessions('WS-1', storage).map(item => item.id)).toEqual(['B']);
+    expect(resolveReportSessions('WS-1', storage).map(item => item.id)).toEqual(['B']);
   });
 
   it('does not attach owned legacy sessions to another workspace', () => {
@@ -64,6 +68,74 @@ describe('workspace report-session compatibility', () => {
     storage.setItem(LEGACY_REPORT_SESSIONS_KEY, '{bad json');
     expect(resolveReportSessions('WS-1', storage, warn)).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not be read'));
+  });
+
+  it('migrates valid legacy siblings while warning about malformed records', () => {
+    const warn = vi.fn();
+    storage.setItem(LEGACY_REPORT_SESSIONS_KEY, JSON.stringify([{ id: 'BROKEN' }, session('VALID')]));
+    expect(resolveReportSessions('WS-1', storage, warn)).toEqual([session('VALID')]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[0]'));
+    expect(storage.getItem(LEGACY_REPORT_SESSIONS_KEY)).toBeNull();
+  });
+
+  it('leaves legacy sessions recoverable when the scoped write fails', () => {
+    const values = new Map<string, string>([[LEGACY_REPORT_SESSIONS_KEY, JSON.stringify([session('RECOVERABLE')])]]);
+    const failing: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: key => values.get(key) ?? null,
+      key: index => [...values.keys()][index] ?? null,
+      removeItem: key => { values.delete(key); },
+      setItem: (key, value) => {
+        if (key === reportSessionsKey('WS-1')) throw new Error('synthetic quota failure');
+        values.set(key, value);
+      },
+    };
+    expect(() => resolveReportSessions('WS-1', failing)).toThrow(/synthetic quota failure/);
+    expect(values.get(LEGACY_REPORT_SESSIONS_KEY)).toBeTruthy();
+    expect(values.has(LEGACY_REPORT_OWNER_KEY)).toBe(false);
+  });
+
+  it('rolls back the scoped write when the migration owner marker fails', () => {
+    const values = new Map<string, string>([[LEGACY_REPORT_SESSIONS_KEY, JSON.stringify([session('RECOVERABLE')])]]);
+    const failing: Storage = {
+      get length() { return values.size; },
+      clear: () => values.clear(),
+      getItem: key => values.get(key) ?? null,
+      key: index => [...values.keys()][index] ?? null,
+      removeItem: key => { values.delete(key); },
+      setItem: (key, value) => {
+        if (key === LEGACY_REPORT_OWNER_KEY) throw new Error('synthetic marker failure');
+        values.set(key, value);
+      },
+    };
+    expect(() => resolveReportSessions('WS-1', failing)).toThrow(/synthetic marker failure/);
+    expect(values.get(LEGACY_REPORT_SESSIONS_KEY)).toBeTruthy();
+    expect(values.has(reportSessionsKey('WS-1'))).toBe(false);
+  });
+
+  it('validates every required report-session field and supported enum', () => {
+    expect(parseSavedReportSession(session('VALID'))).toEqual(session('VALID'));
+    expect(parseSavedReportSession({ id: 'ONLY-ID' })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('NO-ARRAY'), selectedAccounts: undefined })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('BAD-ARRAY'), selectedCategories: [7] })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('BAD-TYPE'), reportType: 'unknown' })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('BAD-MODE'), appendixMode: 'verbose' })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('BAD-DATE'), startDate: 'next week' })).toBeUndefined();
+    expect(parseSavedReportSession({ ...session('BAD-TIME'), timestamp: 'never' })).toBeUndefined();
+    expect(() => validateSavedReportSessions([{ id: 'ONLY-ID' }])).toThrow(/incomplete or malformed/);
+    expect(() => writeReportSessions('WS-1', [{ id: 'ONLY-ID' }], storage)).toThrow(/incomplete or malformed/);
+  });
+
+  it('filters malformed scoped siblings so Reports can still load valid sessions', () => {
+    const warn = vi.fn();
+    storage.setItem(reportSessionsKey('WS-1'), JSON.stringify([{ id: 'ONLY-ID' }, session('VALID')]));
+    expect(resolveReportSessions('WS-1', storage, warn)).toEqual([session('VALID')]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ignored'));
+  });
+
+  it('deduplicates IDs deterministically using the first complete session', () => {
+    expect(writeReportSessions('WS-1', [session('A'), { ...session('A'), name: 'Later duplicate' }], storage)).toEqual([session('A')]);
   });
 
   it('handles empty legacy storage normally', () => {

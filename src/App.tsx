@@ -52,6 +52,7 @@ import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFil
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
 import { resolveReportSessions } from './utils/reportSessions';
+import { finalizeReviewedTransaction, type ReviewFinalization } from './utils/transactionReview';
 import { commitRestoredArchive } from './utils/archiveImportCommit';
 
 export default function App() {
@@ -562,6 +563,39 @@ export default function App() {
   const handleAddTransactionNotes = (txId: string, notes: string) => {
     setTransactions(prev => prev.map(tx => tx.transaction_id === txId ? { ...tx, notes } : tx));
     appendAuditLog('ANNOTATE_ROW', `Added notes to transaction ${txId}: "${notes}"`, 'info');
+  };
+
+  const handleFinalizeTransactionReview = (txId: string, finalization: ReviewFinalization) => {
+    const current = transactions.find(tx => tx.transaction_id === txId);
+    if (!current || current.verification_status !== 'needs_review') return;
+    const finalized = finalizeReviewedTransaction(current, finalization);
+    const nextTransactions = transactions.map(tx => tx.transaction_id === txId ? finalized : tx);
+    setTransactions(nextTransactions);
+
+    if (current.source_document_id) {
+      const remaining = nextTransactions.filter(tx =>
+        tx.source_document_id === current.source_document_id && tx.verification_status === 'needs_review'
+      ).length;
+      setDocuments(prev => prev.map(doc => doc.id === current.source_document_id ? {
+        ...doc,
+        needs_review_transaction_count: remaining,
+        confirmed_transaction_count: nextTransactions.filter(tx =>
+          tx.source_document_id === current.source_document_id &&
+          (tx.verification_status === 'confirmed' || tx.verification_status === 'corrected')
+        ).length,
+      } : doc));
+      if (remaining === 0) {
+        setReconItems(prev => prev.map(item =>
+          item.id === `REC-DOC-${current.source_document_id}` ? { ...item, status: 'Resolved' } : item
+        ));
+      }
+    }
+
+    appendAuditLog(
+      finalization === 'materially_corrected' ? 'FINALIZE_CORRECTED_TRANSACTION' : 'CONFIRM_REVIEWED_TRANSACTION',
+      `Explicitly finalized reviewed transaction ${txId} as ${finalized.verification_status}.`,
+      'info'
+    );
   };
 
   // Handlers: Category Mapping rules
@@ -1297,6 +1331,7 @@ export default function App() {
                   onUpdateCategory={handleUpdateCategory}
                   onUpdateSplits={handleUpdateSplits}
                   onAddTransactionNotes={handleAddTransactionNotes}
+                  onFinalizeReview={handleFinalizeTransactionReview}
                   initialSearchText={ledgerSearchFilter}
                   onClearSearch={() => setLedgerSearchFilter('')}
                   onLinkToDocument={handleViewExtractedTransactions}

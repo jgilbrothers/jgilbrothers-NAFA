@@ -7,6 +7,7 @@ import { isVerifiedTransaction, migrateLegacyTransactions, verifiedTransactionsO
 import type { Transaction } from '../../types';
 import { calculateAggregates } from '../dataEngine';
 import { MOCK_TRANSACTIONS } from '../../data/mockData';
+import { finalizeReviewedTransaction } from '../transactionReview';
 
 describe('document integrity and routing', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -73,6 +74,35 @@ describe('traceability and confirmation gating', () => {
     ];
     expect(verifiedTransactionsOnly(records).map(item => item.transaction_id)).toEqual(['confirmed', 'corrected']);
     expect(isVerifiedTransaction(records[2])).toBe(false);
+  });
+
+  it('finalizes only needs-review transactions through an explicit accepted or corrected outcome', () => {
+    const provenance = { source_document_id: 'DOC-REVIEW', source_page: 4, source_sheet: 'Transactions', source_row: 12 };
+    const reviewed = transaction({ verification_status: 'needs_review', ...provenance });
+    const unrelated = transaction({ transaction_id: 'other', verification_status: 'needs_review' });
+
+    expect(verifiedTransactionsOnly([reviewed])).toEqual([]);
+    const accepted = finalizeReviewedTransaction(reviewed, 'accepted', '2026-01-02T00:00:00.000Z');
+    const corrected = finalizeReviewedTransaction(reviewed, 'materially_corrected', '2026-01-03T00:00:00.000Z');
+    expect(accepted).toMatchObject({ verification_status: 'confirmed', ...provenance });
+    expect(corrected).toMatchObject({ verification_status: 'corrected', ...provenance });
+    expect(verifiedTransactionsOnly([accepted, unrelated])).toEqual([accepted]);
+
+    for (const status of ['confirmed', 'corrected', 'excluded', 'disputed', 'extracted'] as const) {
+      const record = transaction({ verification_status: status });
+      expect(finalizeReviewedTransaction(record, 'accepted')).toBe(record);
+    }
+  });
+
+  it('does not finalize from category or reconciliation metadata alone and persists a final status through JSON', () => {
+    const reviewed = transaction({ verification_status: 'needs_review' });
+    const categoryOnly = { ...reviewed, category: 'Groceries', manual_override: true };
+    const reconciliationOnly = { ...reviewed, duplicate_status: 'not_duplicate' as const };
+    expect(isVerifiedTransaction(categoryOnly)).toBe(false);
+    expect(isVerifiedTransaction(reconciliationOnly)).toBe(false);
+    const reloaded = JSON.parse(JSON.stringify(finalizeReviewedTransaction(categoryOnly, 'accepted'))) as Transaction;
+    expect(reloaded.verification_status).toBe('confirmed');
+    expect(isVerifiedTransaction(reloaded)).toBe(true);
   });
 
   it('preserves legacy totals after persistence migration and keeps sample data non-empty', () => {

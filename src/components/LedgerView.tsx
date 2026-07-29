@@ -14,6 +14,7 @@ import {
   Edit2
 } from 'lucide-react';
 import { Transaction, AccountSummary, SYSTEM_CATEGORIES } from '../types';
+import type { ReviewFinalization } from '../utils/transactionReview';
 
 interface LedgerViewProps {
   transactions: Transaction[];
@@ -21,6 +22,7 @@ interface LedgerViewProps {
   onUpdateCategory: (txId: string, category: string, reason?: string) => void;
   onUpdateSplits: (txId: string, splits: Transaction['splits']) => void;
   onAddTransactionNotes: (txId: string, notes: string) => void;
+  onFinalizeReview: (txId: string, finalization: ReviewFinalization) => void;
   initialSearchText?: string;
   onClearSearch?: () => void;
   onLinkToDocument?: (docId: string) => void;
@@ -32,6 +34,7 @@ export default function LedgerView({
   onUpdateCategory,
   onUpdateSplits,
   onAddTransactionNotes,
+  onFinalizeReview,
   initialSearchText,
   onClearSearch,
   onLinkToDocument
@@ -281,6 +284,16 @@ export default function LedgerView({
                                   <Split className="h-2 w-2" /> SPLIT
                                 </span>
                               )}
+                              {tx.verification_status === 'needs_review' && (
+                                <span className="bg-amber-50 border border-amber-200 text-amber-700 text-[8px] font-bold tracking-wider px-1 rounded">
+                                  NEEDS REVIEW
+                                </span>
+                              )}
+                              {(tx.verification_status === 'confirmed' || tx.verification_status === 'corrected') && (
+                                <span className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-[8px] font-bold tracking-wider px-1 rounded">
+                                  {tx.verification_status.toUpperCase()}
+                                </span>
+                              )}
                             </div>
                             
                             {!isDenseMode && (
@@ -405,6 +418,24 @@ export default function LedgerView({
                           )}
                         </td>
                         <td className={`text-right ${isDenseMode ? 'p-1.5 align-middle' : 'p-3 align-top'}`}>
+                          {tx.verification_status === 'needs_review' && (
+                            <div className="mb-1 flex flex-col items-end gap-1">
+                              <button
+                                onClick={() => onFinalizeReview(tx.transaction_id, 'accepted')}
+                                className="text-emerald-700 hover:bg-emerald-50 rounded border border-emerald-200 p-1 px-1.5 text-[10px] font-bold uppercase transition-all inline-flex items-center gap-1 cursor-pointer"
+                                title="Accept the unchanged reviewed transaction as confirmed"
+                              >
+                                <Check className="h-3 w-3" /> Accept Transaction
+                              </button>
+                              <button
+                                onClick={() => onFinalizeReview(tx.transaction_id, 'materially_corrected')}
+                                className="text-indigo-700 hover:bg-indigo-50 rounded border border-indigo-200 p-1 px-1.5 text-[10px] font-bold uppercase transition-all inline-flex items-center gap-1 cursor-pointer"
+                                title="Use only after correcting factual transaction fields"
+                              >
+                                <Edit2 className="h-3 w-3" /> Finalize Corrected
+                              </button>
+                            </div>
+                          )}
                           {tx.transaction_type === 'debit' && (
                             <button
                               onClick={() => handleOpenSplit(tx)}

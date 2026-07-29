@@ -28,6 +28,7 @@ import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documen
 import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, unreadablePdfPages } from '../utils/pdfPageOcr';
 import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
 import { extractLegalCandidates, type LegalCandidate } from '../utils/legalDocumentExtractor';
+import { isVerifiedTransaction } from '../utils/verifiedTransactions';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
@@ -298,7 +299,7 @@ export default function DocumentsView({
     const isLowConfidence = pdfParsedRows.length === 0 || forcePdfReview;
     const docId = linkedDoc?.id || `DOC-PDF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const filename = linkedDoc?.filename || `ParsedPDF_${pdfInstitution.replace(/\s+/g, '')}_*${suffix}.pdf`;
-    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const existingConfirmedCount = transactions.filter(t => t.source_document_id === docId && isVerifiedTransaction(t)).length;
     const importedCount = pdfParsedRows.length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
@@ -317,7 +318,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: forcePdfReview ? importedCount : 0,
-      confirmed_transaction_count: existingConfirmedCount + importedCount,
+      confirmed_transaction_count: existingConfirmedCount + (forcePdfReview ? 0 : importedCount),
     } : {
       id: docId,
       filename,
@@ -338,7 +339,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: forcePdfReview ? importedCount : 0,
-      confirmed_transaction_count: importedCount,
+      confirmed_transaction_count: forcePdfReview ? 0 : importedCount,
     };
 
     const importBatchId = createImportBatchId();
@@ -461,7 +462,7 @@ export default function DocumentsView({
     const docId = linkedDoc?.id || `DOC-CSV-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const filename = linkedDoc?.filename || `CSV_Import_${selectedAcc?.account_name || 'Statement'}_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
     const importedCount = csvParsedRows.length;
-    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const existingConfirmedCount = transactions.filter(t => t.source_document_id === docId && isVerifiedTransaction(t)).length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
       file_type: csvDocType || linkedDoc.file_type,
@@ -479,7 +480,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
-      confirmed_transaction_count: existingConfirmedCount + importedCount,
+      confirmed_transaction_count: existingConfirmedCount + (routeToReviewQueue ? 0 : importedCount),
     } : {
       id: docId,
       filename,
@@ -500,7 +501,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
-      confirmed_transaction_count: importedCount,
+      confirmed_transaction_count: routeToReviewQueue ? 0 : importedCount,
     };
 
     const importBatchId = createImportBatchId();
@@ -1219,7 +1220,7 @@ export default function DocumentsView({
     const ocrCandidates = doc.text_source === 'ocr' ? candidates.map(c => ({ ...c, source: 'OCR' as const, needsReview: true, confidenceScore: Math.min(c.confidenceScore, doc.ocr_confidence || 0.6), reviewReason: c.reviewReason || 'OCR source must be reviewed before import', note: [c.note, 'source: OCR'].filter(Boolean).join('; ') })) : candidates;
     setTransactionCandidates(ocrCandidates);
     const needsReview = ocrCandidates.filter(c => c.needsReview).length;
-    const updates: Partial<DocumentRecord> = { transactions_extracted: ocrCandidates.length > 0, transaction_candidate_count: ocrCandidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id).length };
+    const updates: Partial<DocumentRecord> = { transactions_extracted: ocrCandidates.length > 0, transaction_candidate_count: ocrCandidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id && isVerifiedTransaction(t)).length };
     onUpdateDocument?.(doc.id, updates);
     setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
     if (ocrCandidates.length) setSuccessNotification(`Found ${ocrCandidates.length} transaction candidate(s)${doc.text_source === 'ocr' ? ' from OCR text' : ''}. Review before importing.`);
@@ -1262,7 +1263,7 @@ export default function DocumentsView({
     const remainingCandidates = transactionCandidates.filter(c => !confirmed.includes(c));
     const remainingActiveCandidates = remainingCandidates.filter(c => !c.excluded);
     const remainingNeedsReview = remainingActiveCandidates.filter(c => c.needsReview || c.transactionType === 'unknown').length;
-    const confirmedCount = (doc.confirmed_transaction_count || transactions.filter(t => t.source_document_id === doc.id).length) + txs.length;
+    const confirmedCount = transactions.filter(t => t.source_document_id === doc.id && isVerifiedTransaction(t)).length + txs.length;
     const documentUpdates: Partial<DocumentRecord> = {
       confirmed_transaction_count: confirmedCount,
       transactions_extracted: confirmedCount > 0 || remainingActiveCandidates.length > 0,
