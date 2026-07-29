@@ -85,6 +85,14 @@ export async function getUploadedFile(documentId: string): Promise<StoredUploade
   return withStore('readonly', store => store.get(documentId));
 }
 
+export async function getAllUploadedFiles(): Promise<StoredUploadedFile[]> {
+  return withStore('readonly', store => store.getAll());
+}
+
+export async function restoreUploadedFile(record: StoredUploadedFile): Promise<void> {
+  await withStore('readwrite', store => store.put(record));
+}
+
 export async function deleteUploadedFile(documentId: string): Promise<void> {
   await withStore('readwrite', store => store.delete(documentId));
 }

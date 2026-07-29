@@ -13,12 +13,18 @@ export interface TransactionCandidate {
   sourcePage?: number;
   sourcePageApproximate?: boolean;
   sourceLine?: number;
+  sourceSheet?: string;
+  sourceRow?: number;
   confidenceScore: number;
   needsReview: boolean;
   reviewReason?: string;
   excluded?: boolean;
   note?: string;
   source?: 'PDF_TEXT' | 'OCR' | 'MANUAL';
+  sourceExcerpt?: string;
+  extractionEngine?: string;
+  extractionTimestamp?: string;
+  verificationStatus?: 'extracted' | 'needs_review' | 'confirmed' | 'corrected' | 'excluded' | 'disputed';
 }
 
 export interface TransactionExtractionContext {
@@ -27,6 +33,9 @@ export interface TransactionExtractionContext {
   sourcePagesApproximate?: boolean;
   statementPeriod?: string;
 }
+
+export const sourcePagesAreApproximate = (storedPageMappingApproximate?: boolean, documentPageMappingApproximate?: boolean): boolean =>
+  (storedPageMappingApproximate ?? documentPageMappingApproximate) !== false;
 
 const moneyPattern = /(?:[-+]?\$?\(?\d{1,3}(?:,\d{3})*\.\d{2}\)?-?|[-+]?\$?\(?\d+\.\d{2}\)?-?)/g;
 const datePattern = /\b(?:\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?|\d{4}-\d{1,2}-\d{1,2})\b/;
@@ -218,6 +227,10 @@ export function extractTransactionCandidates(
         sourcePage: context?.sourcePagesApproximate ? undefined : pageIndex + 1,
         sourcePageApproximate: Boolean(context?.sourcePagesApproximate),
         sourceLine: lineIndex + 1,
+        sourceExcerpt: clean.slice(0, 500),
+        extractionEngine: context?.sourcePagesApproximate ? 'ocr-or-approximate-text' : 'pdfjs',
+        extractionTimestamp: new Date().toISOString(),
+        verificationStatus: needsReview ? 'needs_review' : 'extracted',
         confidenceScore: needsReview ? 0.55 : effectiveDate ? 0.9 : 0.86,
         needsReview,
         reviewReason: reviewReasons.join('; ') || (normalizedDate.inferredYear ? 'year inferred from statement period' : undefined),

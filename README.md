@@ -1,163 +1,72 @@
-# NAFA Ledger — Personal Financial Workstation
+# NAFA Ledger — Private Financial and Evidence Workstation
 
-A secure, offline-first, professional personal financial intelligence workstation. NAFA Ledger is designed for individual auditing, transaction tracking, document organization, and balance analysis in family law, accounting, and general division of assets workflows.
+NAFA Ledger is a browser-based organizational and analytical tool for privately reviewing financial and legal records. It preserves original source files separately from extracted text and requires review before machine-extracted information is treated as verified. It is not a lawyer, financial adviser, court-certified system, or substitute for checking the original record.
 
-## 🌟 Project Overview
+## Current capabilities
 
-NAFA Ledger facilitates transparent, self-contained financial review of multiple combined bank statements, credit card logs, and paystubs. It allows users to ingest records, resolve duplicates, verify category rules, split transaction line-items dynamically (such as separating groceries from individual medical lines), and compile beautiful, print-ready final timeline reports.
+- Project-scoped accounts, documents, transactions, rules, review items, audit logs, and chat history.
+- Original source-file blobs and extracted page text stored separately in IndexedDB.
+- SHA-256 source checksums and content-based duplicate warnings.
+- PDF.js selectable-text extraction with exact page boundaries.
+- Bundled same-origin Tesseract.js OCR for PNG, JPG/JPEG, WebP, and selected scanned-PDF pages. OCR confidence remains visible.
+- Central browser-side routes for PDF, images, TXT, CSV, DOCX, XLSX, and unsupported files.
+- Reviewable transaction candidates linked to document, page/line, excerpt, engine, confidence, and timestamp.
+- Separate legal candidates for allegations, statements, evidence references, findings, and orders.
+- Lightweight JSON metadata backup plus a checksum-verified `.nafa.zip` archive engine containing originals and extracted text.
+- Static Vite build compatible with Cloudflare Pages.
 
-## 🚀 Key Features
+Only transactions explicitly marked `confirmed` or `corrected` are eligible for verified calculations. Legacy/manual records require review during migration; uncertainty and approximate references must remain labeled.
 
-- **Personal Statement Dashboard**: Visualizes high-level assets vs. liabilities, monthly flows, and dynamic net asset distribution cards.
-- **Unified Document Registry**: Manages parsed bank files, paystubs, or receipts with direct audit linkage indexes to original statement materials.
-- **Granular Category Splitting**: Divides credit/debit rows into flexible line-item slices (e.g. splitting an expensive department store bill into Groceries vs. Essential Kids items).
-- **Automated Duplicate & Transfer Flags**: Flags potential internal transfers or duplicated records across statements with simple unilateral resolves.
-- **Contextual Workstation Chat**: Interrogates local metrics and filters balances via natural queries.
-- **Command Palette Action Center (`Ctrl+K`)**: Drills down into navigation routes or exports data with responsive keyboard shortcuts.
-- **Encrypted Workspace Backup**: Restores or exports your entire spreadsheet state in reproducible flat JSON bundles.
-- **Interactive Reports Sandbox**: Compiles print-ready summaries, Exhibits indices, chronological timeline breakdowns, and co-signatory sign-off forms.
+## What “local” and “offline” mean
 
----
+Document bytes and extracted text are processed in the browser and are not sent to an OCR or AI service by default. Optional cloud AI is disabled in this private-use phase. The site and OCR language/worker assets must first be downloaded and cached; an initial load, a cache miss, browser eviction, or a service-worker update can require internet access. Browser storage can be cleared, evicted, or isolated by browser profile and site origin, so it is not a replacement for independently backed-up originals.
 
-## 🔒 Privacy & Offline-First Philosophy
+The service worker caches the application shell and same-origin responses it encounters. It does not guarantee that every OCR asset is available offline. Test the exact browser/device offline before relying on it.
 
-NAFA Ledger is built from the ground up as a **100% offline-ready, client-side workstation**:
-- **Data Privacy**: No transaction values, personal names, account numbers, or documentation contents are ever transmitted to external cloud systems. All records live strictly within the sandbox environment of your browser storage.
-- **No Heavy Backends**: Entirely client-contained React state leveraging persistent browser `localStorage`.
-- **Local Analytics**: Chronological analysis, transfer detection, duplicate resolution, and visual chart rendering happen instantly inside the client browser.
+## Status language
 
----
+- **Uploaded:** the browser accepted the selection.
+- **Stored:** the original blob exists in NAFA’s IndexedDB for this browser/site.
+- **Previewed:** the browser displayed the original; no reading is implied.
+- **Read/extracted:** a named parser produced text, with page mapping and warnings recorded.
+- **OCR processed:** Tesseract attempted image recognition; confidence is not verification.
+- **Reviewed:** a person evaluated a candidate.
+- **Imported:** a transaction record was created.
+- **Confirmed/corrected:** the user intentionally approved or corrected the record; only these states may affect verified analysis.
 
-## 🛠️ Installation & Setup
+## Install and validate
 
-Ensure you have Node.js (v18+) and npm installed on your machine.
+Requires a maintained Node.js LTS release.
 
-### 1. Clone & Install Dependencies
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd nafa-ledger
-
-# Install required npm packages
 npm install
-```
-
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env` in the root folder:
-```bash
-cp .env.example .env
-```
-Open `.env` and configure appropriate overrides:
-```env
-# Optional: Setup Google Gemini API Key for smart reasoning (otherwise uses rich local templates)
-GEMINI_API_KEY="YOUR_API_KEY"
-
-# Optional: Override the brand name displayed in header
-VITE_APP_NAME="Nafa Ledger"
-VITE_APP_VERSION="1.0.0"
-```
-
-### 3. Local Development Start
-```bash
-# Start local Vite development server
+npm run lint
+npm run test
+npm run build
 npm run dev
 ```
-Open browser to `http://localhost:3000` to interact with your workstation sandbox.
 
-### 4. Code Quality & Formatting
-Verify typescript files compile cleanly:
-```bash
-npm run lint
-```
+Cloudflare Pages settings: build command `npm run build`, output directory `dist`, framework preset `Vite`. Do not add document-analysis API keys to client environment variables.
 
-### 5. Build for Production
-To output the static distribution package:
-```bash
-npm run build
-```
-This compiles the application assets and deposits them into the `dist/` workspace folder.
+## Backup formats
 
----
+- `.nafa-backup.json` is a lightweight, unencrypted metadata backup. It does not contain original blobs or independently stored extracted text.
+- `.nafa.zip` is an unencrypted complete project archive format with a versioned manifest, workspace data, original source files, extracted text, and SHA-256 verification. Treat either format as sensitive evidence material and store it securely.
 
-## 📁 Project Structure
+Archive import must create/open a separate project unless the user explicitly confirms replacement. It must not claim a source file was restored when its blob is absent.
 
-```
-nafa-ledger/
-├── public/                 # Static public assets
-│   ├── manifest.json       # PWA Application manifest configs
-│   └── sw.js               # Offline Service Worker shell logic
-├── src/
-│   ├── assets/             # Internal styles or typography elements
-│   ├── components/         # Modular interactive workstation interfaces
-│   │   ├── AccountsView.tsx
-│   │   ├── AiAnalysisWorkspace.tsx
-│   │   ├── DashboardView.tsx
-│   │   ├── DocumentsView.tsx
-│   │   ├── LedgerView.tsx
-│   │   ├── ReportsView.tsx
-│   │   ├── ReviewCorrectionsQueue.tsx
-│   │   ├── RulesManager.tsx
-│   │   └── SettingsView.tsx
-│   ├── data/
-│   │   └── mockData.ts     # Rich default bank statement seed sets
-│   ├── utils/
-│   │   ├── aiAnalysisEngine.ts  # Fallback rule narrative builder & Gemini interface
-│   │   ├── dataEngine.ts        # Duplicate checking & transfer matching logic
-│   │   └── persistence.ts       # Secure JSON backup serialization formats
-│   ├── App.tsx             # Main router and controller state
-│   ├── main.tsx            # React application entry-point
-│   └── types.ts            # Global TypeScript interface definitions
-├── .env.example            # Deployment environment parameters reference
-├── .gitignore              # Ignored folder settings for clean git history
-├── package.json            # Node.js project configuration file
-├── tsconfig.json           # TypeScript configuration
-└── vite.config.ts          # Vite build configurations and HMR rules
-```
+## Privacy and security notes
 
----
+This GitHub repository is public. Never commit real statements, court records, screenshots, extracted text, names, addresses, account numbers, API keys, or `.env` files. Test fixtures must be fictional and privacy-safe. Production code must not log source contents or extracted personal data.
 
-## 🚀 Cloudflare Pages Deployment Instructions
+The browser still communicates with the site host to load application assets, and package assets may be fetched during initial setup. No backup is encrypted unless a later implementation explicitly adds authenticated encryption and documents key handling.
 
-Since NAFA Ledger is a self-contained, statically built Single-Page Application (SPA), it is highly optimized for serverless, zero-maintenance hosts like **Cloudflare Pages**, **GitHub Pages**, or **Netlify**.
+## Controlled acceptance
 
-### Deploying via Cloudflare Dashboard
-1. Log in to your [Cloudflare Dashboard](https://dash.cloudflare.com/) and go to **Compute (Workers) > Pages**.
-2. Click **Create page** and hook up your project GitHub repository.
-3. Choose the build settings:
-   - **Framework Preset**: `Vite` (or `None`)
-   - **Build Command**: `npm run build`
-   - **Build Output Directory**: `dist`
-4. Under **Environment variables (advanced)**, add:
-   - `VITE_APP_NAME` = `"Nafa Ledger Workstation"`
-   - `VITE_APP_VERSION` = `"1.0.0"`
-   - `GEMINI_API_KEY` = (`Optional: Your private API Key if activating smart cloud analysis`)
-5. Click **Save and Deploy**. Cloudflare is now prepared to auto-compile and republish every time you push edits onto your target main branch.
+Before real records, follow [the manual acceptance checklist](docs/MANUAL_ACCEPTANCE_CHECKLIST.md) with synthetic fixtures. Begin real-document testing with one low-sensitivity, searchable PDF; verify its checksum, exact pages, extracted text, candidate gating, archive export, and archive restoration into a new project before adding more records.
 
----
+Known limits: DOCX has no inherent PDF-style page mapping; spreadsheet row confirmation remains intentionally manual; large OCR/archive jobs depend on device memory and can be slow on mobile hardware; OCR assets add roughly 30 MB to a deployment; and generated reports remain organizational work product rather than proof of admissibility.
 
-## 🧠 Optional Gemini Integration Guide
+For the committed fictional fixture inventory, automated coverage, production-browser procedure, Cloudflare preview checks, privacy inspection, and known limitations, see [Pre-Merge Synthetic Acceptance Testing](docs/SYNTHETIC_ACCEPTANCE.md).
 
-NAFA Ledger includes an **optional** enhancement layer linking to Google Gemini AI models to provide sophisticated financial audit observations, anomalies descriptions, and custom summaries.
-
-### Dynamic Client-Isolation Loop
-1. When a `GEMINI_API_KEY` is not provided, NAFA Ledger defaults to the built-in **Local baseline narrative engines**, analyzing categories, average billing cycles, duplicate risks, and timelines entirely in the browser using precalculated state.
-2. When a valid `GEMINI_API_KEY` holds a value, the query-context analyzer bundles the local precalculated mathematics metrics and prompts the lightweight `gemini-3.5-flash` model which generates highly coherent, customized insights without revealing raw database schemas.
-
----
-
-## 📁 Backup & Restore System
-- **Download Workspace Backup (`Ctrl+S`)**: Instantly gathers active ledger state, accounts tables, manual override logs, and chronological audits, packing them into an encrypted single-file `.json` backup.
-- **Restore Workspace**: Uploading a backup file parses, verifies the metadata structure, and hot-swaps browser database pools instantly cleanly.
-
----
-
-## ⚠️ Known Limitations
-- **PDF Generation Layout limits**: To avoid external API leakage, PDF compiled reports use native HTML window printing routines rather than external servers. Users must click "Save as PDF" relative to host operating systems inside the browser.
-- **LocalStorage Storage Caps**: Browser standard limits allow up to 10MB of indexed values. For databases exceeding 25,000 transaction rows, utilize the `Backup Workspace JSON` feature to safely archive historical years.
-
----
-
-## 📈 Future Roadmap
-- **Wasm OCR Engine Support**: Integrate fully offline WebAssembly optical recognition parses for scanned statement JPEG/PDF objects.
-- **Bento Heatmaps Grid**: Interactive weekly budget calendars indicating peak spending dates.
-- **Crypto Asset Suffix Matching**: Linking decentralized wallet indices into unified ledger timelines.
+The processing libraries are lazy-loaded: PDF.js only for PDF work, Tesseract only when OCR starts, Mammoth only for DOCX, SheetJS only for CSV/XLSX, and JSZip only for complete archives. PDF/OCR workers, language data, cores, and standard fonts are served from the same application origin and can be cached by the service worker after first use.

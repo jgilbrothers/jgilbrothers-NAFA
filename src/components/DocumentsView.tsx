@@ -19,9 +19,16 @@ import {
 import { DocumentRecord, AccountSummary, Transaction } from '../types';
 import { deleteUploadedFile, getUploadedFile, saveUploadedFile } from '../utils/fileStorage';
 import { extractPdfText } from '../utils/pdfTextExtractor';
-import { getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
-import { extractTransactionCandidates, TransactionCandidate } from '../utils/transactionExtractor';
+import { deleteExtractedText, getExtractedText, saveExtractedText } from '../utils/extractedTextStorage';
+import { extractTransactionCandidates, sourcePagesAreApproximate, TransactionCandidate } from '../utils/transactionExtractor';
 import { extractReceiptFieldsFromText, isImageOcrSupported, isPdfOcrCandidate, LOCAL_OCR_LOAD_ERROR, runLocalImageOcr } from '../utils/localOcr';
+import { findDuplicateHash, sha256 } from '../utils/fileIntegrity';
+import { getActiveWorkspaceId } from '../utils/persistence';
+import { ingestDocument, officeIngestionDocumentUpdates } from '../utils/documentIngestion';
+import { mergePdfOcrResults, mergePdfTextReread, ocrPdfPages, summarizeMergedPdfOcrState, unreadablePdfPages } from '../utils/pdfPageOcr';
+import { buildSpreadsheetRowCandidates, extractSelectedWorkbookTransactions, selectedWorkbookRows, type SpreadsheetRowCandidate } from '../utils/spreadsheetCandidates';
+import { extractLegalCandidates, parseLegalCandidate, type LegalCandidate } from '../utils/legalDocumentExtractor';
+import { isVerifiedTransaction } from '../utils/verifiedTransactions';
 
 const DOCUMENT_TYPES: DocumentRecord['file_type'][] = ['Checking Statement', 'Savings Statement', 'Credit Card Statement', 'Paystub', 'Receipt', 'Tax Document', 'Court Document', 'Legal Order', 'Loan Document', 'Utility Bill', 'Insurance Document', 'Other', 'Unknown / Needs Review'];
 
@@ -292,7 +299,7 @@ export default function DocumentsView({
     const isLowConfidence = pdfParsedRows.length === 0 || forcePdfReview;
     const docId = linkedDoc?.id || `DOC-PDF-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const filename = linkedDoc?.filename || `ParsedPDF_${pdfInstitution.replace(/\s+/g, '')}_*${suffix}.pdf`;
-    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const existingConfirmedCount = transactions.filter(t => t.source_document_id === docId && isVerifiedTransaction(t)).length;
     const importedCount = pdfParsedRows.length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
@@ -311,7 +318,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: forcePdfReview ? importedCount : 0,
-      confirmed_transaction_count: existingConfirmedCount + importedCount,
+      confirmed_transaction_count: existingConfirmedCount + (forcePdfReview ? 0 : importedCount),
     } : {
       id: docId,
       filename,
@@ -332,7 +339,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: forcePdfReview ? importedCount : 0,
-      confirmed_transaction_count: importedCount,
+      confirmed_transaction_count: forcePdfReview ? 0 : importedCount,
     };
 
     const importBatchId = createImportBatchId();
@@ -351,6 +358,7 @@ export default function DocumentsView({
       is_pending: false,
       running_balance: row.runningBalance,
       source_document_id: docId,
+      verification_status: isLowConfidence ? 'needs_review' : 'confirmed',
       confidence_score: isLowConfidence ? 0.65 : row.confidence,
       duplicate_status: undefined,
       transfer_status: undefined
@@ -454,7 +462,7 @@ export default function DocumentsView({
     const docId = linkedDoc?.id || `DOC-CSV-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
     const filename = linkedDoc?.filename || `CSV_Import_${selectedAcc?.account_name || 'Statement'}_${new Date().toLocaleDateString().replace(/\//g, '-')}.csv`;
     const importedCount = csvParsedRows.length;
-    const existingConfirmedCount = linkedDoc?.confirmed_transaction_count || transactions.filter(t => t.source_document_id === docId).length;
+    const existingConfirmedCount = transactions.filter(t => t.source_document_id === docId && isVerifiedTransaction(t)).length;
     const documentUpdates: DocumentRecord = linkedDoc ? {
       ...linkedDoc,
       file_type: csvDocType || linkedDoc.file_type,
@@ -472,7 +480,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
-      confirmed_transaction_count: existingConfirmedCount + importedCount,
+      confirmed_transaction_count: existingConfirmedCount + (routeToReviewQueue ? 0 : importedCount),
     } : {
       id: docId,
       filename,
@@ -493,7 +501,7 @@ export default function DocumentsView({
       transactions_extracted: true,
       transaction_candidate_count: importedCount,
       needs_review_transaction_count: routeToReviewQueue ? importedCount : 0,
-      confirmed_transaction_count: importedCount,
+      confirmed_transaction_count: routeToReviewQueue ? 0 : importedCount,
     };
 
     const importBatchId = createImportBatchId();
@@ -522,6 +530,7 @@ export default function DocumentsView({
         category: rawCatVal || 'Miscellaneous',
         is_pending: false,
         source_document_id: docId,
+        verification_status: routeToReviewQueue ? 'needs_review' : 'confirmed',
         confidence_score: routeToReviewQueue ? 0.65 : 0.95,
         duplicate_status: undefined,
         transfer_status: undefined
@@ -613,7 +622,7 @@ export default function DocumentsView({
   const isReadableDocument = (doc: DocumentRecord) => {
     const lower = doc.filename.toLowerCase();
     const mime = doc.mime_type || '';
-    return hasLocallyStoredFile(doc) && (mime.includes('pdf') || mime.startsWith('text/') || mime.includes('csv') || mime.startsWith('image/') || lower.endsWith('.pdf') || lower.endsWith('.txt') || lower.endsWith('.csv') || /\.(png|jpe?g|webp)$/i.test(lower));
+    return hasLocallyStoredFile(doc) && (mime.includes('pdf') || mime.startsWith('text/') || mime.includes('csv') || mime.startsWith('image/') || mime.includes('wordprocessingml') || mime.includes('spreadsheetml') || /\.(pdf|txt|csv|docx|xlsx|png|jpe?g|webp)$/i.test(lower));
   };
 
   const isSpreadsheetDocument = (doc: DocumentRecord) => {
@@ -688,8 +697,8 @@ export default function DocumentsView({
     return 'Not extracted yet — document text has not been read.';
   };
 
-  const readSelectedDocumentText = async () => {
-    const doc = documents.find(d => d.id === selectedReadableDocId);
+  const readSelectedDocumentText = async (documentId = selectedReadableDocId) => {
+    const doc = documents.find(d => d.id === documentId);
     if (!doc) {
       if (selectedReadableDocId) {
         setSelectedReadableDocId('');
@@ -722,6 +731,53 @@ export default function DocumentsView({
       setPdfText(text);
       setPdfErrorMessage('');
       setSuccessNotification(`Loaded text from ${doc.filename}.`);
+      return;
+    }
+    if (mime.includes('wordprocessingml') || mime.includes('spreadsheetml') || /\.(docx|xlsx)$/i.test(doc.filename)) {
+      setExtractionBusy(true);
+      try {
+        const file = new File([stored.blob], stored.originalFileName || doc.filename, { type: stored.mimeType });
+        const result = await ingestDocument(file);
+        const supportedOfficeResult = result.kind === 'docx' || result.kind === 'xlsx';
+        const hasExtractedText = supportedOfficeResult && Boolean(result.text.trim());
+        const parser = result.kind === 'docx' ? 'mammoth' as const : 'xlsx' as const;
+        let structuredData = result.structuredData;
+        if (result.kind === 'docx' && ['Court Document', 'Legal Order', 'Other'].includes(doc.file_type)) {
+          const candidates = extractLegalCandidates(doc.id, result.pages.map(page => page.text), result.pageMapping);
+          setLegalCandidates(candidates);
+          structuredData = { legalCandidates: candidates };
+        }
+        if (result.kind === 'xlsx') {
+          const sheets = result.structuredData as Record<string, unknown[][]>;
+          setWorkbookSheets(sheets || {});
+          const firstSheet = Object.keys(sheets || {})[0] || '';
+          setSelectedWorkbookSheet(firstSheet);
+          setWorkbookHeaderRow(1);
+          const candidates = firstSheet ? buildSpreadsheetRowCandidates(doc.id, firstSheet, sheets[firstSheet] || [], 1) : [];
+          setWorkbookCandidates(candidates);
+          structuredData = { sheets, selection: { sheetName: firstSheet, headerRow: 1 }, candidates };
+        }
+        const timestamp = new Date().toISOString();
+        const updates = officeIngestionDocumentUpdates(result, timestamp);
+        if (hasExtractedText) {
+          const saved = { documentId: doc.id, text: result.text, pageTexts: result.pages.map(page => page.text), pageCount: result.pages.length || 1, updatedAt: timestamp, pageMappingApproximate: result.pageMapping !== 'exact', parser, warnings: result.warnings, structuredData };
+          await saveExtractedText(saved);
+          updates.extracted_text_id = doc.id;
+        } else {
+          await deleteExtractedText(doc.id).catch(() => undefined);
+        }
+        setExtractedText(hasExtractedText ? result.text : '');
+        onUpdateDocument?.(doc.id, updates);
+        setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+        updates.text_extraction_status === 'failed' ? setErrorNotification(updates.text_extraction_error || 'Document extraction failed.') : setSuccessNotification(`${result.kind.toUpperCase()} text loaded locally. Review it before using extracted candidates.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Document extraction failed.';
+        await deleteExtractedText(doc.id).catch(() => undefined);
+        setExtractedText('');
+        const updates: Partial<DocumentRecord> = { text_read: false, text_read_at: new Date().toISOString(), extracted_text_available: false, extracted_text_id: undefined, text_source: undefined, text_parser: undefined, text_extraction_status: 'failed', text_extraction_error: message, extraction_warnings: [message], processing_status: 'Requires Verification' };
+        onUpdateDocument?.(doc.id, updates);
+        setErrorNotification(message);
+      } finally { setExtractionBusy(false); }
       return;
     }
     setPdfErrorMessage('This document cannot be read with the current local reader. Try Download Original, or OCR will be needed in a later phase.');
@@ -768,6 +824,8 @@ export default function DocumentsView({
     const needsManualClassification = detectedType === 'Unknown / Needs Review';
     const suggestedPeriod = inferStatementPeriodFromFilename(file.name);
     try {
+      const checksum = await sha256(file);
+      const duplicate = findDuplicateHash(checksum, documents);
       const stored = await saveUploadedFile(docId, file);
       const newDoc: DocumentRecord = {
         id: docId,
@@ -775,6 +833,9 @@ export default function DocumentsView({
         original_file_name: stored.originalFileName,
         mime_type: stored.mimeType,
         file_size: stored.size,
+        project_id: getActiveWorkspaceId(),
+        sha256: checksum,
+        checksum_status: 'verified',
         upload_timestamp: stored.uploadedAt,
         file_type: detectedType,
         ocr_status: 'not_started',
@@ -782,8 +843,9 @@ export default function DocumentsView({
         institution_name: detectedInstitution || 'Not detected',
         statement_period: suggestedPeriod,
         statement_period_suggestion: suggestedPeriod,
-        processing_status: needsManualClassification ? 'Requires Classification' : 'Requires Verification',
-        user_notes: 'Source file stored locally. Institution and type may be detected from filename only; document text has not been read and transactions have not been extracted.',
+        processing_status: needsManualClassification || duplicate ? 'Requires Classification' : 'Requires Verification',
+        user_verification_status: 'unverified',
+        user_notes: `${duplicate ? `Possible duplicate of ${duplicate.filename} (${duplicate.id}) based on identical SHA-256 content. ` : ''}Source file stored locally. Institution and type may be detected from filename only; document text has not been read and transactions have not been extracted.`,
         local_file: { storage: 'indexeddb', stored: true },
         source_file_status: 'stored',
         type_detected: !needsManualClassification,
@@ -796,7 +858,7 @@ export default function DocumentsView({
       onAddDocument(newDoc);
       setRecentImports(prev => [{ id: docId, filename: file.name, timestamp: stored.uploadedAt, status: 'completed' }, ...prev].slice(0, 8));
       setErrorNotification(null);
-      setSuccessNotification(`File '${file.name}' stored locally. Text not read and transactions not extracted yet.`);
+      setSuccessNotification(`File '${file.name}' stored locally with verified SHA-256 checksum.${duplicate ? ' An identical source file was found and flagged for review.' : ''} Text not read and transactions not extracted yet.`);
     } catch (err) {
       console.error(err);
       setSuccessNotification(null);
@@ -859,6 +921,14 @@ export default function DocumentsView({
   const [extractedText, setExtractedText] = useState('');
   const [extractionBusy, setExtractionBusy] = useState(false);
   const [transactionCandidates, setTransactionCandidates] = useState<TransactionCandidate[]>([]);
+  const [workbookSheets, setWorkbookSheets] = useState<Record<string, unknown[][]>>({});
+  const [selectedWorkbookSheet, setSelectedWorkbookSheet] = useState('');
+  const [workbookHeaderRow, setWorkbookHeaderRow] = useState(1);
+  const [workbookCandidates, setWorkbookCandidates] = useState<SpreadsheetRowCandidate[]>([]);
+  const [legalCandidates, setLegalCandidates] = useState<LegalCandidate[]>([]);
+  const [pdfOcrBusy, setPdfOcrBusy] = useState(false);
+  const [pdfOcrProgress, setPdfOcrProgress] = useState('');
+  const pdfOcrAbortRef = useRef<AbortController | null>(null);
   const [reviewRowsOpen, setReviewRowsOpen] = useState(false);
   const previewObjectUrlRef = useRef('');
   useEffect(() => {
@@ -873,10 +943,32 @@ export default function DocumentsView({
     setTransactionCandidates([]);
     setReviewRowsOpen(false);
     setOcrProgress('');
+    setWorkbookSheets({});
+    setSelectedWorkbookSheet('');
+    setWorkbookHeaderRow(1);
+    setWorkbookCandidates([]);
+    setLegalCandidates([]);
     if (!doc) return;
 
     getExtractedText(doc.id).then(storedText => {
-      if (active && storedText) setExtractedText(storedText.text);
+      if (active && storedText) {
+        setExtractedText(storedText.text);
+        const structured = storedText.structuredData as any;
+        const sheets = structured?.sheets || (structured && !structured.legalCandidates ? structured as Record<string, unknown[][]> : undefined);
+        if (sheets) {
+          const selection = structured && 'selection' in structured ? structured.selection : undefined;
+          setWorkbookSheets(sheets);
+          setSelectedWorkbookSheet(selection?.sheetName || Object.keys(sheets)[0] || '');
+          setWorkbookHeaderRow(selection?.headerRow || 1);
+          setWorkbookCandidates(structured && 'candidates' in structured ? structured.candidates || [] : []);
+        }
+        if (structured && 'legalCandidates' in structured && Array.isArray(structured.legalCandidates)) {
+          setLegalCandidates(structured.legalCandidates.flatMap((candidate: unknown) => {
+            const parsed = parseLegalCandidate(candidate);
+            return parsed ? [parsed] : [];
+          }));
+        }
+      }
     }).catch(console.error);
 
     getUploadedFile(doc.id).then(async stored => {
@@ -919,6 +1011,46 @@ export default function DocumentsView({
     };
   }, [selectedDocForPreview?.id]);
 
+  const runPdfOcr = async (doc: DocumentRecord, mode: 'unreadable' | 'all') => {
+    const source = await getUploadedFile(doc.id).catch(() => undefined);
+    const prior = await getExtractedText(doc.id).catch(() => undefined);
+    if (!source?.blob) { setErrorNotification('Original PDF is unavailable in this browser.'); return; }
+    const pageCount = prior?.pageCount || doc.page_count || 0;
+    if (!pageCount) { setErrorNotification('Read the PDF with PDF.js first so page identity can be established.'); return; }
+    const pages = mode === 'all' ? Array.from({ length: pageCount }, (_, index) => index + 1) : unreadablePdfPages(prior?.pageTexts || Array(pageCount).fill(''));
+    if (!pages.length) { setSuccessNotification('Every PDF page already contains meaningful text.'); return; }
+    const controller = new AbortController();
+    pdfOcrAbortRef.current = controller;
+    setPdfOcrBusy(true);
+    try {
+      const results = await ocrPdfPages(source.blob, pages, pageCount, progress => {
+        const percent = Math.round((progress.ocr?.progress || 0) * 100);
+        setPdfOcrProgress(`Page ${progress.page} of ${progress.totalPages}: ${progress.stage === 'rendering' ? 'rendering locally' : `${progress.ocr?.status || 'OCR'} ${percent}%`}`);
+      }, controller.signal);
+      const merged = mergePdfOcrResults(prior, pageCount, results);
+      merged.documentId = doc.id;
+      await saveExtractedText(merged);
+      setExtractedText(merged.text);
+      const summary = summarizeMergedPdfOcrState(merged, doc.ocr_confidence);
+      const updates: Partial<DocumentRecord> = { text_read: summary.textAvailable, text_read_at: merged.updatedAt, extracted_text_available: summary.textAvailable, extracted_text_id: summary.textAvailable ? doc.id : undefined, page_count: pageCount, page_mapping_approximate: false, text_source: 'ocr', text_parser: 'ocr', ocr_engine: 'tesseract-local', ocr_read_at: merged.updatedAt, ocr_status: summary.ocrStatus, ocr_text_available: summary.textAvailable, ocr_confidence: summary.confidence, ocr_error: summary.error, text_extraction_status: summary.textExtractionStatus, extraction_engine: 'pdfjs+tesseract-local', extraction_timestamp: merged.updatedAt, extraction_warnings: merged.warnings, processing_status: summary.processingStatus };
+      onUpdateDocument?.(doc.id, updates);
+      setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
+      summary.failedPageCount ? setErrorNotification(`OCR finished with ${summary.failedPageCount} failed page(s). Previously valid text was preserved.`) : setSuccessNotification(`OCR completed for ${results.length} page(s). Review page text before extracting candidates.`);
+    } catch (error) {
+      if (controller.signal.aborted) setErrorNotification('PDF OCR cancelled. Previously saved text was preserved.');
+      else setErrorNotification(error instanceof Error ? error.message : 'PDF OCR failed.');
+    } finally { pdfOcrAbortRef.current = null; setPdfOcrBusy(false); setPdfOcrProgress(''); }
+  };
+
+  const selectWorkbookLayout = async (doc: DocumentRecord, sheetName: string, headerRow: number) => {
+    const safeHeader = Math.max(1, Math.floor(headerRow || 1));
+    const candidates = buildSpreadsheetRowCandidates(doc.id, sheetName, workbookSheets[sheetName] || [], safeHeader);
+    setSelectedWorkbookSheet(sheetName); setWorkbookHeaderRow(safeHeader); setWorkbookCandidates(candidates);
+    const stored = await getExtractedText(doc.id).catch(() => undefined);
+    if (stored) await saveExtractedText({ ...stored, updatedAt: new Date().toISOString(), structuredData: { sheets: workbookSheets, selection: { sheetName, headerRow: safeHeader }, candidates } });
+    onUpdateDocument?.(doc.id, { processing_status: 'Requires Verification', extraction_warnings: [...(doc.extraction_warnings || []).filter(warning => !warning.startsWith('Workbook selection:')), `Workbook selection: ${sheetName}, header row ${safeHeader}; ${candidates.length} row candidate(s) require confirmation.`] });
+  };
+
 
 
   const readPdfTextFromStoredFile = async (doc: DocumentRecord) => {
@@ -935,27 +1067,30 @@ export default function DocumentsView({
       }
       const result = await extractPdfText(stored.blob);
       const now = new Date().toISOString();
-      if (result.text) {
-        await saveExtractedText({ documentId: doc.id, text: result.text, pageTexts: result.pageTexts, pageCount: result.pageCount, updatedAt: now, pageMappingApproximate: result.pageMappingApproximate ?? true, parser: result.parser, warnings: result.warnings });
-        setExtractedText(result.text);
+      const existingText = await getExtractedText(doc.id).catch(() => undefined);
+      const mergedText = mergePdfTextReread(existingText, doc.id, result, now);
+      if (mergedText.pageTexts.some(text => text.trim())) {
+        await saveExtractedText(mergedText);
+        setExtractedText(mergedText.text);
       }
       const hasPriorText = doc.extracted_text_available === true || doc.text_read === true;
-      const hasNewText = Boolean(result.text.trim());
+      const hasNewText = mergedText.pageTexts.some(text => text.trim());
+      const hasPreservedOcr = mergedText.pageEngines?.some(engine => engine === 'tesseract-local' || engine === 'ocr') || false;
       const ocrStatus = getNormalizedOcrStatus(doc);
       const updates: Partial<DocumentRecord> = hasNewText ? {
         text_read: true,
         text_read_at: now,
         extracted_text_available: true,
         extracted_text_id: doc.id,
-        extracted_text_preview: result.text.slice(0, 500),
-        page_count: result.pageCount || doc.page_count,
+        extracted_text_preview: mergedText.text.slice(0, 500),
+        page_count: mergedText.pageCount || doc.page_count,
         text_extraction_status: result.status,
         text_extraction_error: result.error || result.warning,
-        text_parser: result.parser,
-        page_mapping_approximate: result.pageMappingApproximate ?? true,
+        text_parser: mergedText.parser,
+        page_mapping_approximate: mergedText.pageMappingApproximate ?? true,
         ocr_status: result.status === 'succeeded' ? (ocrStatus === 'failed' ? 'not_started' : doc.ocr_status) : 'needs_review',
-        ocr_confidence: result.confidence,
-        text_source: 'pdf',
+        ocr_confidence: hasPreservedOcr ? doc.ocr_confidence : result.confidence,
+        text_source: hasPreservedOcr ? 'ocr' : 'pdf',
         processing_status: 'Requires Verification',
       } : {
         ...(hasPriorText ? {} : { text_read: false, extracted_text_available: false, extracted_text_id: undefined, extracted_text_preview: undefined, text_source: undefined, text_parser: result.parser, page_mapping_approximate: result.pageMappingApproximate ?? true }),
@@ -1055,7 +1190,7 @@ export default function DocumentsView({
         ocr_text_available: false,
         ocr_error: message,
         ocr_confidence: 0,
-        ocr_engine: 'tesseract-cdn',
+        ocr_engine: 'tesseract-local',
         processing_status: 'Requires Verification',
       };
       onUpdateDocument?.(doc.id, updates);
@@ -1070,22 +1205,26 @@ export default function DocumentsView({
   const extractTransactionsForSelectedDocument = async (doc: DocumentRecord) => {
     const stored = await getExtractedText(doc.id).catch(() => undefined);
     const text = stored?.text || extractedText;
-    if (!text.trim()) {
+    const selectedAccount = accounts.find(a => a.id === doc.account_id);
+    const workbookRows = doc.text_parser === 'xlsx' || doc.text_source === 'xlsx' ? selectedWorkbookRows(doc.id, stored?.structuredData) : undefined;
+    if (workbookRows === undefined && !text.trim()) {
       setErrorNotification('Read PDF text before extracting transactions.');
       return;
     }
-    const selectedAccount = accounts.find(a => a.id === doc.account_id);
-    const candidates = extractTransactionCandidates(text, doc.id, stored?.pageTexts, {
+    const extractionContext = {
       documentType: doc.file_type,
       accountType: selectedAccount?.account_type,
-      sourcePagesApproximate: doc.text_source === 'ocr' || doc.text_parser === 'lightweight-fallback' || stored?.pageMappingApproximate === true,
       statementPeriod: doc.statement_period,
-    });
+    };
+    // Legacy XLSX records without structured selection retain the prior flattened-text fallback.
+    const candidates = workbookRows === undefined
+      ? extractTransactionCandidates(text, doc.id, stored?.pageTexts, { ...extractionContext, sourcePagesApproximate: sourcePagesAreApproximate(stored?.pageMappingApproximate, doc.page_mapping_approximate) })
+      : extractSelectedWorkbookTransactions(workbookRows, extractionContext);
     setReviewRowsOpen(true);
     const ocrCandidates = doc.text_source === 'ocr' ? candidates.map(c => ({ ...c, source: 'OCR' as const, needsReview: true, confidenceScore: Math.min(c.confidenceScore, doc.ocr_confidence || 0.6), reviewReason: c.reviewReason || 'OCR source must be reviewed before import', note: [c.note, 'source: OCR'].filter(Boolean).join('; ') })) : candidates;
     setTransactionCandidates(ocrCandidates);
     const needsReview = ocrCandidates.filter(c => c.needsReview).length;
-    const updates: Partial<DocumentRecord> = { transactions_extracted: ocrCandidates.length > 0, transaction_candidate_count: ocrCandidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id).length };
+    const updates: Partial<DocumentRecord> = { transactions_extracted: ocrCandidates.length > 0, transaction_candidate_count: ocrCandidates.length, needs_review_transaction_count: needsReview, confirmed_transaction_count: transactions.filter(t => t.source_document_id === doc.id && isVerifiedTransaction(t)).length };
     onUpdateDocument?.(doc.id, updates);
     setSelectedDocForPreview(prev => prev?.id === doc.id ? { ...prev, ...updates } : prev);
     if (ocrCandidates.length) setSuccessNotification(`Found ${ocrCandidates.length} transaction candidate(s)${doc.text_source === 'ocr' ? ' from OCR text' : ''}. Review before importing.`);
@@ -1115,11 +1254,20 @@ export default function DocumentsView({
       notes: c.note,
       source_document_id: doc.id,
       confidence_score: c.confidenceScore,
+      source_page: c.sourcePage,
+      source_page_approximate: c.sourcePageApproximate,
+      source_line: c.sourceLine,
+      source_sheet: c.sourceSheet,
+      source_row: c.sourceRow,
+      source_excerpt: c.sourceExcerpt,
+      extraction_engine: c.extractionEngine,
+      extraction_timestamp: c.extractionTimestamp,
+      verification_status: 'confirmed',
     }));
     const remainingCandidates = transactionCandidates.filter(c => !confirmed.includes(c));
     const remainingActiveCandidates = remainingCandidates.filter(c => !c.excluded);
     const remainingNeedsReview = remainingActiveCandidates.filter(c => c.needsReview || c.transactionType === 'unknown').length;
-    const confirmedCount = (doc.confirmed_transaction_count || transactions.filter(t => t.source_document_id === doc.id).length) + txs.length;
+    const confirmedCount = transactions.filter(t => t.source_document_id === doc.id && isVerifiedTransaction(t)).length + txs.length;
     const documentUpdates: Partial<DocumentRecord> = {
       confirmed_transaction_count: confirmedCount,
       transactions_extracted: confirmedCount > 0 || remainingActiveCandidates.length > 0,
@@ -1512,7 +1660,7 @@ Files are stored in this browser’s local storage for this device and website. 
                     <option value="">Select a locally stored PDF, text, or CSV document</option>
                     {documents.filter(isReadableDocument).map(doc => <option key={doc.id} value={doc.id}>{doc.filename}</option>)}
                   </select>
-                  <button type="button" onClick={readSelectedDocumentText} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
+                  <button type="button" onClick={() => void readSelectedDocumentText()} disabled={extractionBusy} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-1.5 px-3 rounded">{extractionBusy ? 'Reading...' : 'Read Selected Document'}</button>
                   <p className="text-[10px] text-indigo-800 font-semibold">{documents.find(doc => doc.id === selectedReadableDocId) ? `Transactions will be linked to: ${documents.find(doc => doc.id === selectedReadableDocId)?.filename}` : 'This will create a document record because no uploaded source file is selected.'}</p>
                 </div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase">Manual fallback: paste text only if automatic PDF reading fails.</label>
@@ -1933,7 +2081,7 @@ Files are stored in this browser’s local storage for this device and website. 
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Privacy:</strong> Local OCR runs in this browser on this device. Your document is not uploaded to a server. The OCR engine may load support files, but the document stays local.</p>
                 {ocrProgress && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2"><strong>OCR:</strong> {ocrProgress}</p>}
                 {selectedDocForPreview.ocr_error && <p className="text-[11px] text-rose-800 bg-rose-50 border border-rose-100 rounded-lg p-2"><strong>OCR failed:</strong> {selectedDocForPreview.ocr_error}</p>}
-                {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2">OCR for scanned PDFs is not available yet. Try image uploads or wait for scanned PDF OCR support.</p>}
+                {pdfOcrProgress && <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2"><strong>PDF OCR:</strong> {pdfOcrProgress}</p>}
                 <p className="text-[11px] text-emerald-900 bg-white/70 border border-emerald-100 rounded-lg p-2"><strong>Transaction Status:</strong> {getTransactionStatusExplanation(selectedDocForPreview, transactions.filter(t => t.source_document_id === selectedDocForPreview.id).length)}</p>
                 {selectedDocForPreview.text_extraction_status === 'failed' && (
                   <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-0.5">
@@ -1953,9 +2101,33 @@ Files are stored in this browser’s local storage for this device and website. 
                   <button type="button" disabled={!previewFileAvailable} onClick={() => deleteOriginalFileOnly(selectedDocForPreview)} className="bg-white disabled:opacity-50 disabled:cursor-not-allowed border border-rose-200 text-rose-700 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Delete File</button>
                   {canRunLocalOcr(selectedDocForPreview) && <button type="button" disabled={!previewFileAvailable || ocrBusy} onClick={() => runLocalOcrForDocument(selectedDocForPreview)} className="bg-amber-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> {ocrBusy ? 'OCR running' : 'Run Local OCR'}</button>}
                   {(selectedDocForPreview.mime_type?.includes('pdf') || selectedDocForPreview.filename.toLowerCase().endsWith('.pdf')) && <button type="button" disabled={!previewFileAvailable || extractionBusy} onClick={() => readPdfTextFromStoredFile(selectedDocForPreview)} className="bg-indigo-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {extractionBusy ? 'Reading...' : 'Read PDF Text'}</button>}
+                  {/\.(docx|xlsx)$/i.test(selectedDocForPreview.filename) && <button type="button" disabled={!previewFileAvailable || extractionBusy} onClick={() => { setSelectedReadableDocId(selectedDocForPreview.id); void readSelectedDocumentText(selectedDocForPreview.id); }} className="bg-indigo-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><FileText className="h-3.5 w-3.5" /> {extractionBusy ? 'Reading...' : `Read ${selectedDocForPreview.filename.toLowerCase().endsWith('.docx') ? 'DOCX' : 'Workbook'}`}</button>}
+                  {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <button type="button" disabled={!previewFileAvailable || pdfOcrBusy || !selectedDocForPreview.page_count} onClick={() => void runPdfOcr(selectedDocForPreview, 'unreadable')} className="bg-amber-600 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> OCR Unreadable Pages</button>}
+                  {isPdfOcrCandidate(selectedDocForPreview.mime_type || '', selectedDocForPreview.filename) && <button type="button" disabled={!previewFileAvailable || pdfOcrBusy || !selectedDocForPreview.page_count} onClick={() => void runPdfOcr(selectedDocForPreview, 'all')} className="bg-amber-700 disabled:opacity-50 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> OCR All Pages</button>}
+                  {pdfOcrBusy && <button type="button" onClick={() => pdfOcrAbortRef.current?.abort()} className="bg-rose-700 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><X className="h-3.5 w-3.5" /> Cancel OCR</button>}
                   {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => setReviewRowsOpen(v => !v)} className="bg-white border border-indigo-200 text-indigo-800 rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Eye className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'View OCR Text' : 'View Extracted Text'}</button>}
                   {selectedDocForPreview.extracted_text_available && <button type="button" onClick={() => extractTransactionsForSelectedDocument(selectedDocForPreview)} className="bg-emerald-600 text-white rounded px-3 py-1.5 font-bold inline-flex items-center gap-1"><Layers className="h-3.5 w-3.5" /> {selectedDocForPreview.text_source === 'ocr' && selectedDocForPreview.ocr_text_available ? 'Extract Transactions from OCR Text' : 'Extract Transactions'}</button>}
                 </div>
+                {Object.keys(workbookSheets).length > 0 && (
+                  <div className="mt-3 bg-white/80 border border-indigo-100 rounded-lg p-3 space-y-2">
+                    <label className="block text-[10px] font-bold uppercase text-indigo-800">Workbook sheet preview</label>
+                    <select value={selectedWorkbookSheet} onChange={event => void selectWorkbookLayout(selectedDocForPreview, event.target.value, workbookHeaderRow)} className="w-full border border-slate-200 rounded p-2 text-xs">
+                      {Object.keys(workbookSheets).map(name => <option key={name} value={name}>{name}</option>)}
+                    </select>
+                    <label className="block text-[10px] text-slate-700">Header row <input type="number" min="1" max={Math.max(1, (workbookSheets[selectedWorkbookSheet] || []).length)} value={workbookHeaderRow} onChange={event => void selectWorkbookLayout(selectedDocForPreview, selectedWorkbookSheet, Number(event.target.value))} className="ml-2 w-20 border rounded p-1" /></label>
+                    <p className="text-[10px] text-amber-800">{workbookCandidates.length} source-linked row candidate(s). Rows remain under review and do not affect totals until explicitly confirmed.</p>
+                    <div className="max-h-52 overflow-auto border rounded">
+                      <table className="min-w-full text-[10px]"><tbody>{(workbookSheets[selectedWorkbookSheet] || []).slice(0, 25).map((row, rowIndex) => <tr key={rowIndex} className="border-b"><th className="p-1 bg-slate-50 text-slate-500">{rowIndex + 1}</th>{(Array.isArray(row) ? row : []).slice(0, 12).map((cell, cellIndex) => <td key={cellIndex} className="p-1 border-l whitespace-nowrap">{String(cell ?? '')}</td>)}</tr>)}</tbody></table>
+                    </div>
+                  </div>
+                )}
+                {legalCandidates.length > 0 && (
+                  <div className="mt-3 bg-white/80 border border-amber-100 rounded-lg p-3 space-y-2">
+                    <p className="text-[10px] font-bold uppercase text-amber-900">Reviewable legal-field candidates</p>
+                    <p className="text-[10px] text-amber-800">Machine-extracted allegations, statements, findings, and orders remain separate and unverified.</p>
+                    {legalCandidates.slice(0, 20).map(candidate => <div key={candidate.id} className="border rounded p-2 text-[10px]"><strong>{candidate.kind.replace('_', ' ')} · {candidate.field}</strong><span className="block mt-1">{candidate.value}</span><span className="block text-slate-500">Page {candidate.sourcePage || 'not mapped'} · {Math.round(candidate.confidence * 100)}% · {candidate.verificationStatus}</span></div>)}
+                  </div>
+                )}
               </div>
 
               {/* ACTION: RENAME & RECLASSIFY & EDIT NOTES INLINE */}

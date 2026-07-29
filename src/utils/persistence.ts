@@ -1,5 +1,6 @@
 import { AccountSummary, DocumentRecord, CategoryRule, Transaction, AuditLog, ChatMessage } from '../types';
 import { ReconciliationItem } from './dataEngine';
+import { migrateLegacyTransactions } from './verifiedTransactions';
 
 const STORAGE_KEY = 'nafa_ledger_workspace_v3';
 const WORKSPACE_INDEX_KEY = 'nafa_ledger_workspace_index_v1';
@@ -21,7 +22,7 @@ export interface WorkspaceSummary {
 }
 
 const getWorkspaceKey = (id: string) => `nafa_ledger_workspace_v3_${id}`;
-const createWorkspaceId = () => `WS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+export const createWorkspaceId = () => `WS-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
 export interface LocalWorkspaceProfile {
   userDisplayName: string;
@@ -35,6 +36,23 @@ export interface LocalWorkspaceProfile {
   appVersion: string;
 }
 
+const PROFILE_KEYS = new Set(['userDisplayName', 'workspaceName', 'caseProjectName', 'projectNote', 'county', 'jurisdiction', 'createdAt', 'lastOpenedAt', 'appVersion']);
+const isValidTimestamp = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && !Number.isNaN(Date.parse(value));
+
+export function parseLocalWorkspaceProfile(value: unknown): LocalWorkspaceProfile | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const profile = value as Record<string, unknown>;
+  if (Object.keys(profile).some(key => !PROFILE_KEYS.has(key) || key === '__proto__' || key === 'constructor' || key === 'prototype')) return undefined;
+  for (const key of ['userDisplayName', 'workspaceName', 'jurisdiction', 'appVersion'] as const) {
+    if (typeof profile[key] !== 'string' || profile[key].length === 0) return undefined;
+  }
+  for (const key of ['caseProjectName', 'projectNote', 'county'] as const) {
+    if (profile[key] !== undefined && typeof profile[key] !== 'string') return undefined;
+  }
+  if (!isValidTimestamp(profile.createdAt) || !isValidTimestamp(profile.lastOpenedAt)) return undefined;
+  return profile as unknown as LocalWorkspaceProfile;
+}
+
 export interface WorkspaceState {
   accounts: AccountSummary[];
   documents: DocumentRecord[];
@@ -45,6 +63,7 @@ export interface WorkspaceState {
   chatLog: ChatMessage[];
   jurisdiction: string;
   profile?: LocalWorkspaceProfile;
+  reportMetadata?: unknown;
 }
 
 const getDefaultWorkspaceState = (name = 'New Project', note = '', jurisdiction = 'North Carolina', county = 'Durham County'): WorkspaceState => {
@@ -88,6 +107,7 @@ export function validateWorkspaceBackup(parsed: any): boolean {
 export function normalizeImportedWorkspaceState(state: WorkspaceState): WorkspaceState {
   return {
     ...state,
+    transactions: migrateLegacyTransactions(state.transactions || []),
     documents: (state.documents || []).map(doc => ({
       ...doc,
       source_file_status: doc.source_file_status === 'metadata_only' ? 'metadata_only' : 'unavailable',
@@ -120,7 +140,13 @@ export function getWorkspaceStateById(id: string): WorkspaceState | null {
     const raw = localStorage.getItem(getWorkspaceKey(id));
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return validateWorkspaceBackup(parsed) ? parsed as WorkspaceState : null;
+    if (!validateWorkspaceBackup(parsed)) return null;
+    const safeProfile = parseLocalWorkspaceProfile(parsed.profile) || getDefaultWorkspaceState().profile!;
+    const migrated = { ...parsed, profile: safeProfile, transactions: migrateLegacyTransactions(parsed.transactions) } as WorkspaceState;
+    if (migrated.transactions.some((transaction, index) => transaction !== parsed.transactions[index])) {
+      localStorage.setItem(getWorkspaceKey(id), JSON.stringify(migrated));
+    }
+    return migrated;
   } catch { return null; }
 }
 
@@ -128,12 +154,41 @@ export function saveWorkspace(state: WorkspaceState): void {
   try {
     const activeId = getActiveWorkspaceId();
     const now = new Date().toISOString();
-    const normalized: WorkspaceState = { ...state, profile: { ...(state.profile || getDefaultWorkspaceState().profile!), workspaceName: state.profile?.workspaceName || 'Local Project', jurisdiction: state.profile?.jurisdiction || state.jurisdiction || 'North Carolina', county: state.profile?.county || 'Durham County', lastOpenedAt: now } };
+    const safeProfile = parseLocalWorkspaceProfile(state.profile) || getDefaultWorkspaceState().profile!;
+    const normalized: WorkspaceState = { ...state, profile: { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Local Project', jurisdiction: safeProfile.jurisdiction || state.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now } };
     const rawData = JSON.stringify(normalized);
     localStorage.setItem(getWorkspaceKey(activeId), rawData);
     localStorage.setItem(STORAGE_KEY, rawData);
     upsertWorkspaceSummary(summarizeWorkspace(activeId, normalized));
   } catch (err) { console.error('Failed to serialize Nafa Workspace into local client storage:', err); }
+}
+
+export function commitImportedWorkspace(id: string, state: WorkspaceState): void {
+  const keys = [getWorkspaceKey(id), STORAGE_KEY, WORKSPACE_INDEX_KEY, ACTIVE_WORKSPACE_ID_KEY];
+  const previous = new Map(keys.map(key => [key, localStorage.getItem(key)]));
+  try {
+    const now = new Date().toISOString();
+    const safeProfile = parseLocalWorkspaceProfile(state.profile) || getDefaultWorkspaceState('Imported Project').profile!;
+    const normalized: WorkspaceState = { ...state, transactions: migrateLegacyTransactions(state.transactions || []), profile: { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Imported Project', jurisdiction: safeProfile.jurisdiction || state.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now } };
+    const rawData = JSON.stringify(normalized);
+    const currentSummaries = getWorkspaceSummaries().filter(summary => summary.id !== id);
+    localStorage.setItem(getWorkspaceKey(id), rawData);
+    localStorage.setItem(STORAGE_KEY, rawData);
+    localStorage.setItem(WORKSPACE_INDEX_KEY, JSON.stringify([summarizeWorkspace(id, normalized), ...currentSummaries]));
+    localStorage.setItem(ACTIVE_WORKSPACE_ID_KEY, id);
+  } catch (error) {
+    const rollbackFailures: string[] = [];
+    for (const [key, value] of [...previous.entries()].reverse()) {
+      try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      } catch {
+        rollbackFailures.push(key);
+      }
+    }
+    if (rollbackFailures.length) throw new Error(`Imported workspace persistence failed and rollback was incomplete for workspace storage. Original error: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Imported workspace persistence failed and was rolled back. ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function loadWorkspace(): WorkspaceState | null {
@@ -144,7 +199,15 @@ export function loadWorkspace(): WorkspaceState | null {
     const parsed = JSON.parse(rawData);
     if (validateWorkspaceBackup(parsed)) {
       const now = new Date().toISOString();
-      parsed.profile = { ...(parsed.profile || getDefaultWorkspaceState().profile), workspaceName: parsed.profile?.workspaceName || 'Local Project', jurisdiction: parsed.profile?.jurisdiction || parsed.jurisdiction || 'North Carolina', county: parsed.profile?.county || 'Durham County', lastOpenedAt: now };
+      const safeProfile = parseLocalWorkspaceProfile(parsed.profile) || getDefaultWorkspaceState().profile!;
+      parsed.profile = { ...safeProfile, workspaceName: safeProfile.workspaceName || 'Local Project', jurisdiction: safeProfile.jurisdiction || parsed.jurisdiction || 'North Carolina', county: safeProfile.county || 'Durham County', lastOpenedAt: now };
+      const originalTransactions = parsed.transactions;
+      parsed.transactions = migrateLegacyTransactions(originalTransactions);
+      if (parsed.transactions.some((transaction: Transaction, index: number) => transaction !== originalTransactions[index])) {
+        const serialized = JSON.stringify(parsed);
+        localStorage.setItem(getWorkspaceKey(activeId), serialized);
+        localStorage.setItem(STORAGE_KEY, serialized);
+      }
       return parsed as WorkspaceState;
     }
   } catch (err) { console.warn('Stale workspace mapping detected during restore sequence:', err); }

@@ -44,7 +44,7 @@ export interface DocumentRecord {
   ocr_read_at?: string;
   ocr_error?: string;
   ocr_engine?: 'local' | 'tesseract-local' | 'tesseract-cdn';
-  text_source?: 'pdf' | 'ocr' | 'manual' | 'csv';
+  text_source?: 'pdf' | 'ocr' | 'manual' | 'csv' | 'docx' | 'xlsx';
   account_id?: string;
   institution_name: string;
   statement_period?: string;
@@ -60,6 +60,13 @@ export interface DocumentRecord {
   original_file_name?: string;
   mime_type?: string;
   file_size?: number;
+  project_id?: string;
+  sha256?: string;
+  checksum_status?: 'pending' | 'verified' | 'failed';
+  extraction_engine?: string;
+  extraction_timestamp?: string;
+  extraction_warnings?: string[];
+  user_verification_status?: 'unverified' | 'verified' | 'corrected' | 'disputed';
   local_file?: {
     storage: 'indexeddb';
     stored: boolean;
@@ -72,7 +79,7 @@ export interface DocumentRecord {
   extracted_text_preview?: string;
   extracted_text_id?: string;
   page_count?: number;
-  text_parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr';
+  text_parser?: 'pdfjs' | 'lightweight-fallback' | 'ocr' | 'mammoth' | 'xlsx';
   page_mapping_approximate?: boolean;
   text_extraction_status?: 'not_started' | 'extracting' | 'succeeded' | 'failed' | 'needs_review';
   text_extraction_error?: string;
@@ -128,6 +135,15 @@ export interface Transaction {
   running_balance?: number;
   notes?: string;
   source_document_id?: string;
+  source_page?: number;
+  source_page_approximate?: boolean;
+  source_line?: number;
+  source_sheet?: string;
+  source_row?: number;
+  source_excerpt?: string;
+  extraction_engine?: string;
+  extraction_timestamp?: string;
+  verification_status?: 'extracted' | 'needs_review' | 'confirmed' | 'corrected' | 'excluded' | 'disputed';
   confidence_score?: number; // Document read quality confidence
   classification_ruleset_version?: string; // e.g. "neutral-v1" or "NC-family-v1"
   splits?: TransactionSplit[];

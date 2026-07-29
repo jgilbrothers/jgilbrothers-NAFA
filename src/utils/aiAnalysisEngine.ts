@@ -376,35 +376,9 @@ export async function optionalGeminiNarrative(
   contextSummary: string,
   apiKey?: string
 ): Promise<string> {
-  if (!apiKey) {
-    // Safe, high-compliance local fallback narrative directly generated
-    return `*[Local Analysis Mode Enabled]*\n\n${contextSummary}`;
-  }
-
-  try {
-    // Dynamic import to abide by client environment isolation protocols
-    const { GoogleGenAI } = await import('@google/genai');
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build'
-        }
-      }
-    });
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
-      contents: `You are an expert impartial financial audit analyzer. Here is a locally pre-filtered analysis context summary of a user's financial accounts:
-${contextSummary}
-
-Please interpret and write an objective, rigorous explanatory narrative for the user's query: "${query}".
-Do NOT perform your own raw math or alter any of the calculated totals. Stick strictly to the facts provided. Use neutral, professional tone. Avoid dramatic or overconfident terminology.`,
-    });
-
-    return response.text || contextSummary;
-  } catch (err: any) {
-    console.warn("Opt-in Gemini API invoke failed. Falling back to high-grade local baseline narrative engine:", err);
-    return `*[Local Fallback Mode - Gemini Engine offline: ${err.message}]*\n\n${contextSummary}`;
-  }
+  void query;
+  void apiKey;
+  // Cloud analysis is deliberately disabled for controlled private use. A future
+  // opt-in integration must present consent and an exact outbound-data preview.
+  return `*[Local Analysis Mode Enabled]*\n\n${contextSummary}`;
 }

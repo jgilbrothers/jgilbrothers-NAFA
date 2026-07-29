@@ -25,36 +25,18 @@ import {
   Briefcase
 } from 'lucide-react';
 import { Transaction, AccountSummary, DocumentRecord } from '../types';
+import { resolveReportSessions, writeReportSessions, type SavedReportSession } from '../utils/reportSessions';
 
-export interface SavedReportSession {
-  id: string;
-  name: string;
-  timestamp: string;
-  caseTitle: string;
-  caseNumber: string;
-  clientName: string;
-  jurisdiction: string;
-  reportType: string;
-  selectedAccounts: string[];
-  selectedCategories: string[];
-  startDate: string;
-  endDate: string;
-  excludeDuplicates: boolean;
-  excludeTransfers: boolean;
-  excludeUnresolved: boolean;
-  includeCharts: boolean;
-  includeNarratives: boolean;
-  appendixMode: 'off' | 'condensed' | 'detailed';
-  customNotes?: string;
-}
+export type { SavedReportSession } from '../utils/reportSessions';
 
 interface ReportsViewProps {
   transactions: Transaction[];
   accounts: AccountSummary[];
   documents?: DocumentRecord[];
+  workspaceId: string;
 }
 
-export default function ReportsView({ transactions, accounts, documents = [] }: ReportsViewProps) {
+export default function ReportsView({ transactions, accounts, documents = [], workspaceId }: ReportsViewProps) {
   // Report metadata states
   const [caseTitle, setCaseTitle] = useState('Doe vs. Doe Dissolution');
   const [caseNumber, setCaseNumber] = useState('NC-2026-DOM-4421');
@@ -92,13 +74,12 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
 
   // Local report history sessions persistence
   const [savedSessions, setSavedSessions] = useState<SavedReportSession[]>(() => {
-    try {
-      const raw = localStorage.getItem('nafa_saved_reported_sessions_v1');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
+    return resolveReportSessions(workspaceId);
   });
+
+  useEffect(() => {
+    setSavedSessions(resolveReportSessions(workspaceId));
+  }, [workspaceId]);
 
   const [sessionDraftName, setSessionDraftName] = useState('');
 
@@ -143,7 +124,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
 
     const updated = [newSession, ...savedSessions];
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    writeReportSessions(workspaceId, updated);
     setSessionDraftName('');
     triggerSuccessNotification('Saved report configuration saved to local workstations history');
   };
@@ -175,7 +156,7 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
     e.stopPropagation();
     const updated = savedSessions.filter(s => s.id !== id);
     setSavedSessions(updated);
-    localStorage.setItem('nafa_saved_reported_sessions_v1', JSON.stringify(updated));
+    writeReportSessions(workspaceId, updated);
     triggerSuccessNotification('Removed report session from workspace history');
   };
 
@@ -498,9 +479,8 @@ export default function ReportsView({ transactions, accounts, documents = [] }: 
         <head>
           <title>${caseTitle} - Comprehensive Financial Summary</title>
           <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
             body {
-              font-family: 'Inter', sans-serif;
+              font-family: Arial, Helvetica, sans-serif;
               color: #0f172a;
               margin: 40px;
               line-height: 1.4;

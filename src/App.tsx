@@ -46,9 +46,14 @@ import {
 // Types and helper calculators
 import { AccountSummary, DocumentRecord, Transaction, CategoryRule, ChatMessage, AuditLog } from './types';
 import { calculateAggregates, applyCategoryRules, detectReconciliationQueues, ReconciliationItem } from './utils/dataEngine';
-import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
+import { migrateLegacyTransactions, verifiedTransactionsOnly } from './utils/verifiedTransactions';
+import { exportProjectArchive, inspectProjectArchive, restoreProjectArchive } from './utils/projectArchive';
+import { loadWorkspace, saveWorkspace, clearSavedWorkspace, exportWorkspaceToFile, LocalWorkspaceProfile, getWorkspaceSummaries, getActiveWorkspaceId, setActiveWorkspaceId, createNewWorkspace, createWorkspaceId, renameActiveWorkspace, WorkspaceSummary, getWorkspaceStateById, validateWorkspaceBackup, summarizeWorkspace, hasLocalProjects, normalizeImportedWorkspaceState } from './utils/persistence';
 import { deleteStoredFilesByDocumentIds, deleteUploadedFile } from './utils/fileStorage';
 import { deleteExtractedText, deleteExtractedTextsByDocumentIds } from './utils/extractedTextStorage';
+import { resolveReportSessions } from './utils/reportSessions';
+import { finalizeReviewedTransaction, type ReviewFinalization } from './utils/transactionReview';
+import { commitRestoredArchive } from './utils/archiveImportCommit';
 
 export default function App() {
   const appName = (import.meta as any).env?.VITE_APP_NAME || "NAFA Ledger";
@@ -350,6 +355,45 @@ export default function App() {
     }
   };
 
+  const handleExportCompleteArchive = async (onProgress?: (completed: number, total: number) => void): Promise<void> => {
+    const reportMetadata = resolveReportSessions(activeWorkspaceId);
+    const state = { accounts, documents, transactions, rules, reconItems, auditLogs, chatLog, jurisdiction, profile, reportMetadata };
+    const blob = await exportProjectArchive(activeWorkspaceId, state, onProgress);
+    const safeName = (profile?.workspaceName || 'nafa-project').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'nafa-project';
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${safeName}.nafa.zip`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    appendAuditLog('EXPORT_COMPLETE_ARCHIVE', `Exported complete project archive with ${documents.length} document records.`, 'info');
+  };
+
+  const handleImportCompleteArchive = async (file: File): Promise<string> => {
+    const inspected = await inspectProjectArchive(file);
+    const incoming = inspected.workspace;
+    const originalName = incoming.profile?.workspaceName || incoming.profile?.caseProjectName || 'Imported Project';
+    const summary = `${incoming.documents.length} documents, ${incoming.transactions.length} transactions, ${inspected.manifest.files.length} original source files`;
+    if (!confirm(`Import “${originalName}” as a new project?\n\n${summary}\n\nThe current project will not be overwritten.`)) throw new Error('Archive import cancelled.');
+    const importName = `${originalName} (Imported)`;
+    // Reserve identifiers in memory first. Persistent workspace state is not created
+    // until every archive record has validated and the local file restore succeeds.
+    const newWorkspaceId = createWorkspaceId();
+    const idPrefix = newWorkspaceId.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    const documentIdMap = Object.fromEntries(incoming.documents.map((document, index) => [document.id, `DOC-IMPORT-${idPrefix}-${index + 1}`]));
+    const restored = await restoreProjectArchive(file, documentIdMap);
+    restored.documents = restored.documents.map(document => ({ ...document, project_id: newWorkspaceId }));
+    restored.profile = { ...(restored.profile || { userDisplayName: 'Local User', jurisdiction: restored.jurisdiction, createdAt: new Date().toISOString(), appVersion }), workspaceName: importName, caseProjectName: importName, lastOpenedAt: new Date().toISOString() };
+    await commitRestoredArchive(newWorkspaceId, restored);
+    setActiveWorkspaceIdState(newWorkspaceId);
+    applyWorkspaceState(restored);
+    setWorkspaceSummaries(getWorkspaceSummaries());
+    setHasOpenedProject(true);
+    return `Imported ${summary} into new project “${importName}”. All manifest checksums passed.`;
+  };
+
   // Shared Tab redirection with dynamic search text state passing
   const handleViewExtractedTransactions = (docId: string) => {
     setLedgerSearchFilter(docId);
@@ -402,9 +446,10 @@ export default function App() {
   };
 
   // Recalculates metrics on every state adjustment automatically
+  const verifiedTransactions = useMemo(() => verifiedTransactionsOnly(transactions), [transactions]);
   const aggregates = useMemo(() => {
-    return calculateAggregates(accounts, transactions);
-  }, [accounts, transactions]);
+    return calculateAggregates(accounts, verifiedTransactions);
+  }, [accounts, verifiedTransactions]);
 
   // Unresolved low-confidence flags calculation for indicators
   const unresolvedReviewCount = useMemo(() => {
@@ -518,6 +563,39 @@ export default function App() {
   const handleAddTransactionNotes = (txId: string, notes: string) => {
     setTransactions(prev => prev.map(tx => tx.transaction_id === txId ? { ...tx, notes } : tx));
     appendAuditLog('ANNOTATE_ROW', `Added notes to transaction ${txId}: "${notes}"`, 'info');
+  };
+
+  const handleFinalizeTransactionReview = (txId: string, finalization: ReviewFinalization) => {
+    const current = transactions.find(tx => tx.transaction_id === txId);
+    if (!current || current.verification_status !== 'needs_review') return;
+    const finalized = finalizeReviewedTransaction(current, finalization);
+    const nextTransactions = transactions.map(tx => tx.transaction_id === txId ? finalized : tx);
+    setTransactions(nextTransactions);
+
+    if (current.source_document_id) {
+      const remaining = nextTransactions.filter(tx =>
+        tx.source_document_id === current.source_document_id && tx.verification_status === 'needs_review'
+      ).length;
+      setDocuments(prev => prev.map(doc => doc.id === current.source_document_id ? {
+        ...doc,
+        needs_review_transaction_count: remaining,
+        confirmed_transaction_count: nextTransactions.filter(tx =>
+          tx.source_document_id === current.source_document_id &&
+          (tx.verification_status === 'confirmed' || tx.verification_status === 'corrected')
+        ).length,
+      } : doc));
+      if (remaining === 0) {
+        setReconItems(prev => prev.map(item =>
+          item.id === `REC-DOC-${current.source_document_id}` ? { ...item, status: 'Resolved' } : item
+        ));
+      }
+    }
+
+    appendAuditLog(
+      finalization === 'materially_corrected' ? 'FINALIZE_CORRECTED_TRANSACTION' : 'CONFIRM_REVIEWED_TRANSACTION',
+      `Explicitly finalized reviewed transaction ${txId} as ${finalized.verification_status}.`,
+      'info'
+    );
   };
 
   // Handlers: Category Mapping rules
@@ -692,7 +770,7 @@ export default function App() {
   const handleLoadSampleDemoData = () => {
     setAccounts(MOCK_ACCOUNTS);
     setDocuments(MOCK_DOCUMENTS as any);
-    setTransactions(MOCK_TRANSACTIONS);
+    setTransactions(migrateLegacyTransactions(MOCK_TRANSACTIONS));
     setRules(MOCK_RULES);
     setReconItems(MOCK_RECON_ITEMS);
     setAuditLogs(MOCK_AUDIT_LOGS);
@@ -1215,7 +1293,7 @@ export default function App() {
               {activeTab === 'dashboard' && (
                 <DashboardView 
                   accounts={accounts}
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   aggregates={aggregates}
                   documents={documents}
                   onNavigate={(tab) => setActiveTab(tab)}
@@ -1253,6 +1331,7 @@ export default function App() {
                   onUpdateCategory={handleUpdateCategory}
                   onUpdateSplits={handleUpdateSplits}
                   onAddTransactionNotes={handleAddTransactionNotes}
+                  onFinalizeReview={handleFinalizeTransactionReview}
                   initialSearchText={ledgerSearchFilter}
                   onClearSearch={() => setLedgerSearchFilter('')}
                   onLinkToDocument={handleViewExtractedTransactions}
@@ -1271,7 +1350,7 @@ export default function App() {
               {activeTab === 'ai-chat' && (
                 <AiAnalysisWorkspace
                   chatLog={chatLog}
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   onSendMessage={handleSendMessage}
                   onClearChat={() => setChatLog([])}
                 />
@@ -1279,9 +1358,10 @@ export default function App() {
 
               {activeTab === 'reports' && (
                 <ReportsView
-                  transactions={transactions}
+                  transactions={verifiedTransactions}
                   accounts={accounts}
                   documents={documents}
+                  workspaceId={activeWorkspaceId}
                 />
               )}
 
@@ -1310,6 +1390,8 @@ export default function App() {
                   jurisdiction={jurisdiction}
                   onChangeJurisdiction={(j) => setJurisdiction(j)}
                   onExportBackup={handleExportBackup}
+                  onExportCompleteArchive={handleExportCompleteArchive}
+                  onImportCompleteArchive={handleImportCompleteArchive}
                   onImportBackup={handleImportBackup}
                   onClearStoredFilesOnly={handleClearStoredFilesOnly}
                   workspaceName={profile?.workspaceName || 'Local Workspace'}

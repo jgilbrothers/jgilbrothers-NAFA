@@ -24,6 +24,8 @@ interface SettingsViewProps {
   jurisdiction: string;
   onChangeJurisdiction: (j: string) => void;
   onExportBackup: () => void;
+  onExportCompleteArchive: (onProgress?: (completed: number, total: number) => void) => Promise<void>;
+  onImportCompleteArchive: (file: File) => Promise<string>;
   onImportBackup: (backupState: any) => Promise<boolean>;
   onClearStoredFilesOnly: () => Promise<void>;
   workspaceName: string;
@@ -54,6 +56,8 @@ export default function SettingsView({
   jurisdiction, 
   onChangeJurisdiction,
   onExportBackup,
+  onExportCompleteArchive,
+  onImportCompleteArchive,
   onImportBackup,
   onClearStoredFilesOnly,
   workspaceName,
@@ -85,6 +89,8 @@ export default function SettingsView({
   const [ownerNameInput, setOwnerNameInput] = useState(ownerName);
   const [countyInput, setCountyInput] = useState(county);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [archiveStatus, setArchiveStatus] = useState('');
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const isMounted = useRef(true);
 
   const refreshFileStats = async () => {
@@ -194,6 +200,23 @@ export default function SettingsView({
     } else {
       setImportError('Workspace restore was rejected by persistent database engine.');
     }
+  };
+
+  const exportCompleteArchive = async () => {
+    setArchiveBusy(true); setImportError(''); setArchiveStatus('Preparing complete archive…');
+    try {
+      await onExportCompleteArchive((completed, total) => setArchiveStatus(`Archiving ${completed} of ${total} stored artifacts…`));
+      setArchiveStatus('Complete .nafa.zip archive downloaded successfully. This archive is not encrypted.');
+    } catch (error) { setImportError(error instanceof Error ? error.message : 'Complete archive export failed.'); setArchiveStatus(''); }
+    finally { setArchiveBusy(false); }
+  };
+
+  const importCompleteArchive = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+    setArchiveBusy(true); setImportError(''); setArchiveStatus('Validating archive structure and checksums…');
+    try { setArchiveStatus(await onImportCompleteArchive(file)); await refreshFileStats(); }
+    catch (error) { const message = error instanceof Error ? error.message : 'Complete archive import failed.'; if (message !== 'Archive import cancelled.') setImportError(message); setArchiveStatus(message); }
+    finally { setArchiveBusy(false); }
   };
 
   return (
@@ -399,19 +422,28 @@ export default function SettingsView({
             </p>
 
             <div className="space-y-2 border-t border-slate-100 pt-3">
+              <button type="button" disabled={archiveBusy} onClick={() => void exportCompleteArchive()} className="w-full bg-emerald-800 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all flex items-center justify-center gap-1.5 shadow-sm">
+                <Download className="h-3.5 w-3.5" /> Export Complete Project (.nafa.zip)
+              </button>
+              <label className="w-full bg-white border border-emerald-200 hover:bg-emerald-50 text-emerald-800 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm">
+                <Upload className="h-3.5 w-3.5" /> Import Complete Project (.nafa.zip)
+                <input type="file" accept=".zip,.nafa.zip,application/zip" disabled={archiveBusy} onChange={event => void importCompleteArchive(event)} className="hidden" />
+              </label>
+              {archiveStatus && <p className="text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-100 rounded p-2">{archiveStatus}</p>}
+
               {/* Local Backup Exporter Trigger Button */}
               <button
                 type="button"
                 onClick={onExportBackup}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
               >
-                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Project Backup
+                <Download className="h-3.5 w-3.5 text-emerald-400" /> Export Lightweight Metadata Backup
               </button>
 
               {/* Local Restore Importer Trigger Button via standard browser file selector */}
               <div className="relative">
                 <label className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[10px] uppercase py-2.5 px-4 rounded transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm">
-                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Import Project Backup
+                  <Upload className="h-3.5 w-3.5 text-indigo-500" /> Import Lightweight Metadata Backup
                   <input
                     type="file"
                     accept=".json"
@@ -424,7 +456,7 @@ export default function SettingsView({
               <div className="text-[9.5px] text-slate-400 font-mono text-center pt-1 leading-normal border-t border-slate-100 mt-2">
                 ⚠️ Workspace backup contains accounts, documents, transactions, categorizations, rules, and settings. 
                 <span className="block italic text-slate-400 mt-1 font-sans">
-                  This backup preserves project data and document information. Source files stored in browser storage may need to be exported separately until full archive export is available. Backups are the safest way to move or preserve your NAFA Ledger workspace. This archive is a data backup, not a certified legal record, and not a substitute for original bank statements.
+                  The JSON option is an unencrypted metadata-only backup and excludes source blobs. Use the complete unencrypted .nafa.zip archive when originals and extracted artifacts must be included. Neither format is a certified legal record or a substitute for original bank statements.
                 </span>
               </div>
 
